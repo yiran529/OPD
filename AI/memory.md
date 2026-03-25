@@ -20,10 +20,11 @@
 - [x] 应该用LoRA 
 - [] training script是不是仿照框架(比如 https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py)写的
 - [] 应该用CE吗？
-- [] theta_old是什么
+- [x] theta_old是什么
 - [] max_length/chunking
 - [] 应该切断rollout的tokens之间的梯度吗
-- [] 应该赋予接近corrupted tokens的loss低一些的权重？
+- [] 应该赋予接近corrupted tokens的loss低一些的权重？state MSE是不是太死了？
+- [] KL方向
 
 
 ## 2026-03-25-16:35 : FLA/GatedDeltaNet loading hardening
@@ -80,3 +81,9 @@
 ## 2026-03-25-19:20 : Exclude output head from auto LoRA targets
 - When `lora_target_modules` is empty (auto mode), LoRA target inference now excludes `lm_head` by default.
 - If users want LoRA on output head explicitly, they can still provide it via non-empty `lora_target_modules`.
+
+## 2026-03-25-19:35 : Comparison with GaLore torchrun_main.py training flow
+- Checked against `https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py`.
+- Conclusion: our script follows the same high-level training skeleton (distributed init, dataloader, optimizer/scheduler, grad accumulation, clipping, logging, checkpoint), but it is not a direct copy.
+- Key difference is intentional OPD logic: frozen `theta_old` rollout model, periodic rollout sync, and clean-vs-corrupted KL/state losses.
+- Therefore, similarity to GaLore improves engineering confidence, but correctness still depends on OPD-specific rollout/loss validation.
