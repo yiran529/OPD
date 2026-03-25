@@ -1,5 +1,9 @@
 # Implementation Status (2026-03-25)
 
+## 大致说明
+当前实现的想法是：自己实现training loop（仿照一些常见框架，比如https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py），调用flash-linear-attention库（https://github.com/fla-org/flash-linear-attention）的模型实现，然后加载https://huggingface.co/m-a-p 中的预训练权重，在fineweb edu 100B上进行微调。
+我暂时只先想用https://huggingface.co/m-a-p/340M-20B-GatedDeltaNet-pure-baseline/tree/main的pure GatedDeltaNet做初步实验。
+
 ## Scope of this iteration
 - Build a minimal explicit training scaffold for OPD experiments on `m-a-p/340M-20B-GatedDeltaNet-pure-baseline`.
 - Keep training logic local and inspectable, with fail-fast checks.
