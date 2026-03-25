@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -18,6 +18,11 @@ class TrainConfig:
     expected_architecture: str = "GatedDeltaNetForCausalLM"
     trust_remote_code: bool = True
     dtype: str = "bf16"
+    finetune_mode: str = "full"
+    lora_r: int = 16
+    lora_alpha: int = 32
+    lora_dropout: float = 0.05
+    lora_target_modules: list[str] = field(default_factory=list)
 
     dataset_name: str = "HuggingFaceFW/fineweb-edu"
     dataset_config: str = "sample-100BT"
@@ -74,6 +79,8 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError(f"Unsupported objective: {cfg.objective}")
     if cfg.dtype not in {"bf16", "fp16", "fp32"}:
         raise ValueError(f"Unsupported dtype: {cfg.dtype}")
+    if cfg.finetune_mode not in {"full", "lora"}:
+        raise ValueError(f"Unsupported finetune_mode: {cfg.finetune_mode}")
     if cfg.context_len <= 0 or cfg.prefix_len <= 0 or cfg.continuation_len <= 0:
         raise ValueError("context_len/prefix_len/continuation_len must be positive")
     if cfg.micro_batch_size <= 0 or cfg.grad_accum_steps <= 0:
@@ -90,6 +97,16 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("state_key must be a non-empty string")
     if cfg.state_time_stride <= 0:
         raise ValueError("state_time_stride must be positive")
+    if cfg.lora_r <= 0:
+        raise ValueError(f"lora_r must be positive, got {cfg.lora_r}")
+    if cfg.lora_alpha <= 0:
+        raise ValueError(f"lora_alpha must be positive, got {cfg.lora_alpha}")
+    if not 0.0 <= cfg.lora_dropout < 1.0:
+        raise ValueError(f"lora_dropout must be in [0, 1), got {cfg.lora_dropout}")
+    if not isinstance(cfg.lora_target_modules, list):
+        raise ValueError("lora_target_modules must be a list")
+    if any((not isinstance(name, str) or not name) for name in cfg.lora_target_modules):
+        raise ValueError("lora_target_modules must be a list of non-empty strings")
 
 
 def load_config(path: str) -> TrainConfig:

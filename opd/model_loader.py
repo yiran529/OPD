@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import List, Tuple
 
 import torch
 import transformers
@@ -55,6 +55,102 @@ def _assert_clean_weight_loading(loading_info: dict) -> None:
             f"missing_keys={missing} unexpected_keys={unexpected} "
             f"mismatched_keys={mismatched} error_msgs={error_msgs}"
         )
+
+
+def _linear_module_names(model: torch.nn.Module) -> List[str]:
+    names: List[str] = []
+    for module_name, module in model.named_modules():
+        if isinstance(module, torch.nn.Linear):
+            names.append(module_name)
+    return names
+
+
+def _resolve_lora_target_modules(model: torch.nn.Module, cfg: TrainConfig) -> List[str]:
+    linear_names = _linear_module_names(model)
+    if not linear_names:
+        raise RuntimeError(
+            "LoRA requested, but no torch.nn.Linear modules were found in the loaded model. "
+            "This path currently supports Linear-module LoRA injection only."
+        )
+
+    if cfg.lora_target_modules:
+        requested = list(dict.fromkeys(cfg.lora_target_modules))
+        missing: List[str] = []
+        for target in requested:
+            has_match = any(
+                module_name == target or module_name.endswith(f".{target}") for module_name in linear_names
+            )
+            if not has_match:
+                missing.append(target)
+        if missing:
+            available_leaf_names = sorted({name.rsplit(".", 1)[-1] for name in linear_names})
+            raise RuntimeError(
+                "Some lora_target_modules did not match any Linear module. "
+                f"missing={missing} available_leaf_names={available_leaf_names}"
+            )
+        return requested
+
+    # Auto-target all distinct Linear leaf names, excluding output head (lm_head) by default.
+    auto_targets = sorted(
+        {
+            name.rsplit(".", 1)[-1]
+            for name in linear_names
+            if name != "lm_head" and not name.endswith(".lm_head")
+        }
+    )
+    if not auto_targets:
+        raise RuntimeError("Failed to infer LoRA target modules from Linear layers")
+    return auto_targets
+
+
+def _assert_lora_trainable_params(model: torch.nn.Module) -> None:
+    trainable_names = [name for name, param in model.named_parameters() if param.requires_grad]
+    if not trainable_names:
+        raise RuntimeError("LoRA wrapping produced zero trainable parameters")
+
+    unexpected = [name for name in trainable_names if "lora_" not in name]
+    if unexpected:
+        preview = unexpected[:20]
+        raise RuntimeError(
+            "LoRA mode expected only LoRA adapter params to be trainable, "
+            f"but found non-LoRA trainable params={preview} total_unexpected={len(unexpected)}"
+        )
+
+
+def _maybe_wrap_with_lora(model: torch.nn.Module, cfg: TrainConfig) -> torch.nn.Module:
+    if cfg.finetune_mode != "lora":
+        return model
+
+    try:
+        from peft import LoraConfig, TaskType, get_peft_model
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError(
+            "PEFT is not importable. Install `peft` to use finetune_mode=lora."
+        ) from exc
+
+    target_modules = _resolve_lora_target_modules(model=model, cfg=cfg)
+    lora_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=cfg.lora_r,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+        target_modules=target_modules,
+        bias="none",
+    )
+    model = get_peft_model(model, lora_config)
+    _assert_lora_trainable_params(model)
+
+    trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    total_params = sum(param.numel() for param in model.parameters())
+    print(
+        "LoRA setup: "
+        f"r={cfg.lora_r} alpha={cfg.lora_alpha} dropout={cfg.lora_dropout} "
+        f"target_modules={target_modules} "
+        f"trainable_params={trainable_params} total_params={total_params} "
+        f"trainable_ratio={100.0 * trainable_params / max(total_params, 1):.4f}%",
+        flush=True,
+    )
+    return model
 
 
 @torch.no_grad()
@@ -137,7 +233,6 @@ def build_model_and_tokenizer(cfg: TrainConfig, device: torch.device) -> Tuple[t
         torch_dtype=model_dtype,
         output_loading_info=True,
     )
-    model.to(device)
 
     _assert_expected_model_impl(model=model, expected_architecture=cfg.expected_architecture)
     if not hasattr(fla, model.__class__.__name__):
@@ -156,6 +251,9 @@ def build_model_and_tokenizer(cfg: TrainConfig, device: torch.device) -> Tuple[t
         f"architectures={getattr(model.config, 'architectures', None)}",
         flush=True,
     )
+
+    model = _maybe_wrap_with_lora(model=model, cfg=cfg)
+    model.to(device)
 
     _run_startup_sanity(
         model=model,

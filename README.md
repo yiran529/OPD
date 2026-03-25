@@ -32,6 +32,18 @@ Set `objective` in config:
 - `baseline_ce`: plain next-token CE finetune
 - `opd_kl`: rollout KL + state alignment
 
+## Finetune mode
+
+Set `finetune_mode` in config:
+- `full`: full-parameter finetune
+- `lora`: LoRA adapter finetune via PEFT
+
+LoRA config keys:
+- `lora_r`, `lora_alpha`, `lora_dropout`
+- `lora_target_modules`:
+  - non-empty list: explicit module-name suffixes to target
+  - empty list: auto-target all distinct `torch.nn.Linear` leaf names except `lm_head` (fail-fast if no Linear modules)
+
 For `opd_kl`, state alignment is cache-based (memory state from `past_key_values`) with:
 - `state_key` (default `recurrent_state`)
 - `state_time_stride` (compute state MSE every N continuation steps)

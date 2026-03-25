@@ -7,6 +7,11 @@ tokenizer_name: null
 expected_architecture: GatedDeltaNetForCausalLM
 trust_remote_code: true
 dtype: bf16
+finetune_mode: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules: []
 
 dataset_name: HuggingFaceFW/fineweb-edu
 dataset_config: sample-100BT

@@ -20,12 +20,7 @@ Read files in this order:
 3. `AI/code_map.md`
 4. `AI/memory.md`
 
-If there is a conflict:
-- `AI/ideas/1.md` defines the research goal,
-- `AGENTS.md` defines engineering style,
-- `AI/memory.md` records durable decisions.
-
-### AI Files
+### In details
 
 `AI/` contains lightweight project context for the agent.
 
@@ -52,6 +47,26 @@ Avoid framework-like overdesign.
 Do not build for hypothetical future use cases.
 
 This codebase is for a specific research goal, not for a general-purpose training framework.
+
+### Code Readability (Complex Logic)
+
+If a piece of code contains complex logic:
+
+- Break it into clearly separated logical blocks.
+- Add short comments for each block explaining its purpose.
+- Use comments to visually separate blocks (e.g., divider-style comments).
+
+Prefer:
+
+```python
+# ---- compute corrupted prefix ----
+...
+
+# ---- rollout with model ----
+...
+
+# ---- compute alignment loss ----
+```
 
 ---
 
@@ -128,7 +143,10 @@ When implementing a change:
 
 1. read `AI/ideas/1.md`,
 2. inspect the relevant code,
-3. make the smallest correct change,
+3. make the smallest correct change,m inimize the scope of changes.
+    - make the smallest change that correctly implements the idea,
+    - avoid modifying unrelated code,
+    - do not refactor or introduce abstractions unless necessary.
+    - If a change is large, invasive, or structurally significant: propose a plan first, get user confirmation before implementing.
 4. keep the implementation explicit,
-5. record durable decisions in `AI/memory.md` if needed.
-
+5. record durable decisions in `AI/memory.md` and `AI/implementation.md` if needed.

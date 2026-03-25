@@ -5,7 +5,7 @@ import random
 import time
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -62,14 +62,22 @@ def _split_batch_segments(batch_tokens: torch.Tensor, cfg: TrainConfig) -> Tuple
     return context, clean_prefix, continuation
 
 
-def _build_optimizer(model: torch.nn.Module, cfg: TrainConfig) -> torch.optim.Optimizer:
-    return torch.optim.AdamW(
-        model.parameters(),
+def _build_optimizer(
+    model: torch.nn.Module,
+    cfg: TrainConfig,
+) -> Tuple[torch.optim.Optimizer, List[torch.nn.Parameter]]:
+    trainable_params = [param for param in model.parameters() if param.requires_grad]
+    if not trainable_params:
+        raise RuntimeError("No trainable parameters found. Check finetune_mode and LoRA config.")
+
+    optimizer = torch.optim.AdamW(
+        trainable_params,
         lr=cfg.learning_rate,
         betas=(cfg.adam_beta1, cfg.adam_beta2),
         eps=cfg.adam_eps,
         weight_decay=cfg.weight_decay,
     )
+    return optimizer, trainable_params
 
 
 def _compute_baseline_ce(model: torch.nn.Module, batch_tokens: torch.Tensor):
@@ -141,7 +149,19 @@ def run_training(
         rollout_model.to(dist_env.device)
         sync_rollout_model(rollout_model, raw_model)
 
-    optimizer = _build_optimizer(model, cfg)
+    optimizer, trainable_params = _build_optimizer(model, cfg)
+    if dist_env.is_main:
+        total_params = sum(param.numel() for param in model.parameters())
+        trainable_param_count = sum(param.numel() for param in trainable_params)
+        print(
+            "Trainable parameter summary: "
+            f"finetune_mode={cfg.finetune_mode} "
+            f"trainable_params={trainable_param_count} "
+            f"total_params={total_params} "
+            f"trainable_ratio={100.0 * trainable_param_count / max(total_params, 1):.4f}%",
+            flush=True,
+        )
+
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=cfg.warmup_steps,
@@ -233,11 +253,11 @@ def run_training(
 
         if scaler is not None:
             scaler.unscale_(optimizer)
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
             scaler.step(optimizer)
             scaler.update()
         else:
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
             optimizer.step()
 
         scheduler.step()

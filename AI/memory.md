@@ -16,8 +16,8 @@
 ## 2026-03-25-15:00 : Problem/TODO
 - [x] state应该是用Linear attention中的memory state，而不是last hidden states
 - [x] 检查：是否使用了FLA库（https://github.com/fla-org/flash-linear-attention），是否正确使用了FLA库中的gated deltanet，权重加载是否正确
-- [] 是否真的会用到FLA中的算子？
-- [] 应该用LoRA 
+- [x] 是否真的会用到FLA中的算子？
+- [x] 应该用LoRA 
 - [] training script是不是仿照框架(比如 https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py)写的
 - [] 应该用CE吗？
 - [] theta_old是什么
@@ -63,3 +63,20 @@
   - export check that loaded class exists in `fla`,
   - startup cache sanity requiring FLA-style cache state keys.
 - Therefore this path fails fast if model resolution drifts away from FLA implementation.
+
+
+## 2026-03-25-19:05 : LoRA finetune mode (PEFT) for FLA models
+- Added config switch `finetune_mode` with two explicit paths:
+  - `full`: full-parameter finetune.
+  - `lora`: PEFT LoRA adapter finetune.
+- LoRA is applied as a thin wrapper in `opd/model_loader.py` after FLA preload checks, without modifying third-party FLA code.
+- LoRA target selection is fail-fast:
+  - if `lora_target_modules` is provided, every entry must match at least one `torch.nn.Linear` module suffix;
+  - if empty, targets auto-resolve to all distinct Linear leaf names in the loaded model.
+- LoRA mode enforces trainable-parameter discipline:
+  - startup asserts trainable params are LoRA adapter params only;
+  - optimizer and grad clipping operate only on `requires_grad=True` params.
+
+## 2026-03-25-19:20 : Exclude output head from auto LoRA targets
+- When `lora_target_modules` is empty (auto mode), LoRA target inference now excludes `lm_head` by default.
+- If users want LoRA on output head explicitly, they can still provide it via non-empty `lora_target_modules`.
