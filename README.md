@@ -31,3 +31,8 @@ torchrun --nproc_per_node=8 train.py --config configs/gdn_340m_opd.yaml
 Set `objective` in config:
 - `baseline_ce`: plain next-token CE finetune
 - `opd_kl`: rollout KL + state alignment
+
+For `opd_kl`, state alignment is cache-based (memory state from `past_key_values`) with:
+- `state_key` (default `recurrent_state`)
+- `state_time_stride` (compute state MSE every N continuation steps)
+- `opd_grad_through_prefix` (whether corrupted-prefix prefill keeps gradients)

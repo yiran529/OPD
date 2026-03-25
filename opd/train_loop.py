@@ -17,8 +17,9 @@ from opd.checkpoint import load_checkpoint, save_checkpoint
 from opd.config import TrainConfig
 from opd.distributed import DistEnv, barrier, reduce_mean
 from opd.fineweb_data import build_dataloader
-from opd.losses import OpdLossBundle, compute_opd_kl_state_loss
+from opd.losses import OpdLossBundle
 from opd.rollout import generate_rollout_tokens, sync_rollout_model
+from opd.state_alignment import compute_stepwise_opd_losses
 
 
 def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
@@ -97,34 +98,17 @@ def _compute_opd_loss(
             pad_token_id=pad_token_id,
         )
 
-    corrupted_tokens = torch.cat([context, corrupted_prefix, z_tokens], dim=1)
-    clean_tokens = torch.cat([context, clean_prefix, z_tokens], dim=1)
-
-    corrupted_outputs = model(
-        input_ids=corrupted_tokens,
-        use_cache=False,
-        output_hidden_states=True,
-    )
-
-    model_was_training = model.training
-    model.eval()
-    with torch.no_grad():
-        clean_outputs = model(
-            input_ids=clean_tokens,
-            use_cache=False,
-            output_hidden_states=True,
-        )
-    if model_was_training:
-        model.train()
-
-    return compute_opd_kl_state_loss(
-        corrupted_outputs=corrupted_outputs,
-        clean_outputs=clean_outputs,
+    return compute_stepwise_opd_losses(
+        model=model,
+        context_tokens=context,
+        corrupted_prefix_tokens=corrupted_prefix,
+        clean_prefix_tokens=clean_prefix,
         z_tokens=z_tokens,
-        context_len=cfg.context_len,
-        prefix_len=cfg.prefix_len,
         lambda_state=cfg.lambda_state,
         ce_anchor_weight=cfg.ce_anchor_weight,
+        state_key=cfg.state_key,
+        grad_through_prefix=cfg.opd_grad_through_prefix,
+        state_time_stride=cfg.state_time_stride,
     )
 
 

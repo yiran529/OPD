@@ -43,6 +43,9 @@ class TrainConfig:
 
     lambda_state: float = 0.1
     ce_anchor_weight: float = 0.0
+    state_key: str = "recurrent_state"
+    state_time_stride: int = 1
+    opd_grad_through_prefix: bool = True
 
     rollout_temperature: float = 1.0
     rollout_top_p: float = 1.0
@@ -83,6 +86,10 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("rollout_temperature must be >= 0")
     if not 0.0 < cfg.rollout_top_p <= 1.0:
         raise ValueError("rollout_top_p must be in (0, 1]")
+    if not cfg.state_key:
+        raise ValueError("state_key must be a non-empty string")
+    if cfg.state_time_stride <= 0:
+        raise ValueError("state_time_stride must be positive")
 
 
 def load_config(path: str) -> TrainConfig:
