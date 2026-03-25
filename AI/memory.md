@@ -14,9 +14,22 @@
 
 
 ## 2026-03-25-15:00 : Problem/TODO
-1. state应该是用Linear attention中的memory state，而不是last hidden states
-2. 检查：是否使用了FLA库（https://github.com/fla-org/flash-linear-attention），是否正确使用了FLA库中的gated deltanet，权重加载是否正确
-3. 应该用LoRA 
-4. training script是不是仿照框架(比如 https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py)写的
-5. 应该用CE吗？
-6. theta_old是什么
+- [] state应该是用Linear attention中的memory state，而不是last hidden states
+- [x] 检查：是否使用了FLA库（https://github.com/fla-org/flash-linear-attention），是否正确使用了FLA库中的gated deltanet，权重加载是否正确
+- [] 应该用LoRA 
+- [] training script是不是仿照框架(比如 https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py)写的
+- [] 应该用CE吗？
+- [] theta_old是什么
+- [] max_length/chunking
+
+
+## 2026-03-25-16:35 : FLA/GatedDeltaNet loading hardening
+- `opd/model_loader.py` now performs strict startup checks for FLA + GatedDeltaNet loading.
+- Model loading uses `output_loading_info=True` and fails fast if any of: `missing_keys`, `unexpected_keys`, `mismatched_keys`, `error_msgs` are non-empty.
+- Runtime now asserts loaded model implementation is actually from `fla.models.gated_deltanet` and class name matches expected architecture.
+- Added startup sanity forward with `use_cache=True`; it fails fast if logits are non-finite, `past_key_values` is missing/empty, or per-layer cache lacks non-None `recurrent_state`.
+- Startup logs now include `fla` version, `transformers` version, actual model class/module, and config model metadata to improve reproducibility/debugging.
+## 2026-03-25-16:40 : Generalize strict checks to all FLA models
+- Validation is no longer GatedDeltaNet-only; it now supports all FLA model families while keeping fail-fast behavior.
+- Model implementation check now allows FLA/remote-code modules but requires class name to be exported by `fla`.
+- Cache sanity check is generalized from `recurrent_state`-only to FLA cache state union: `recurrent_state|attn_state|conv_state|ffn_state` (at least one non-None).
