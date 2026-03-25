@@ -49,3 +49,17 @@
   - `state_time_stride` (default `1`)
   - `opd_grad_through_prefix` (default `true`)
 - Implementation is fail-fast for cache/state structure mismatch (missing key, `None` state, layer/state shape mismatch).
+
+## 2026-03-25-18:05 : Check on FLA accelerated operators usage
+- Verified from upstream source (`4225ff950afdda0125d318567379ea17bcdbb3be`) that GatedDeltaNet layer calls `chunk_gated_delta_rule` / `fused_recurrent_gated_delta_rule` from `fla.ops.gated_delta_rule`.
+- Verified from upstream source that training mode for GatedDeltaNet enforces `chunk` mode, i.e. training should use `chunk_gated_delta_rule` path.
+- This check fetched upstream files via pipe-only commands (`curl | sed/rg`) and did not write temporary source files to disk.
+
+
+## 2026-03-25-18:20 : Why AutoModel still resolves to FLA model
+- Even though model construction uses `AutoModelForCausalLM`, loading is constrained to FLA/remote implementation by:
+  - `trust_remote_code=True` with expected architecture check (`config.architectures`),
+  - post-load class/module assertions (`fla.*` or `transformers_modules.*`),
+  - export check that loaded class exists in `fla`,
+  - startup cache sanity requiring FLA-style cache state keys.
+- Therefore this path fails fast if model resolution drifts away from FLA implementation.
