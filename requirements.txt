@@ -1,0 +1,6 @@
+torch>=2.3
+transformers>=4.45
+datasets>=2.20
+pyyaml>=6.0
+accelerate>=0.33
+flash-linear-attention
