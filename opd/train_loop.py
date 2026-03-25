@@ -115,7 +115,6 @@ def _compute_opd_loss(
         lambda_state=cfg.lambda_state,
         ce_anchor_weight=cfg.ce_anchor_weight,
         state_key=cfg.state_key,
-        grad_through_prefix=cfg.opd_grad_through_prefix,
         state_time_stride=cfg.state_time_stride,
     )
 

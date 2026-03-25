@@ -24,6 +24,18 @@ def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
     raise TypeError(f"Unsupported state object type: {type(state_obj)}")
 
 
+def _detach_tree(obj):
+    if isinstance(obj, torch.Tensor):
+        return obj.detach()
+    if isinstance(obj, list):
+        return [_detach_tree(item) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(_detach_tree(item) for item in obj)
+    if isinstance(obj, dict):
+        return {key: _detach_tree(value) for key, value in obj.items()}
+    raise TypeError(f"Unsupported detach object type: {type(obj)}")
+
+
 def _extract_layer_state(layer_state: dict, state_key: str, layer_idx: int):
     if not isinstance(layer_state, dict):
         raise TypeError(
@@ -160,7 +172,6 @@ def compute_stepwise_opd_losses(
     lambda_state: float,
     ce_anchor_weight: float,
     state_key: str,
-    grad_through_prefix: bool,
     state_time_stride: int,
 ) -> OpdLossBundle:
     if context_tokens.dim() != 2:
@@ -185,10 +196,11 @@ def compute_stepwise_opd_losses(
 
     if model_was_training:
         model.train()
+    # Hard-code prefix stop-grad: do not backprop through x + y_hat prefill.
     corrupted_cache = _prefill_cache(
         model=model,
         prefix_tokens=corrupted_prefix,
-        requires_grad=grad_through_prefix,
+        requires_grad=False,
     )
 
     model.eval()
@@ -201,16 +213,19 @@ def compute_stepwise_opd_losses(
     if model_was_training:
         model.train()
 
-    kl_terms: List[torch.Tensor] = []
-    state_terms: List[torch.Tensor] = []
-    ce_terms: List[torch.Tensor] = []
+    # Stream accumulators keep loss construction explicit and avoid retaining per-step lists.
+    kl_sum: torch.Tensor | None = None
+    state_sum: torch.Tensor | None = None
+    ce_sum: torch.Tensor | None = None
+    state_count = 0
+    ce_count = 0
 
     for t in range(continuation_len):
         token_t = z_tokens[:, t : t + 1]
 
         if model_was_training:
             model.train()
-        corr_logits_t, corrupted_cache = _decode_one_token(
+        corr_logits_t, next_corrupted_cache = _decode_one_token(
             model=model,
             token=token_t,
             past_key_values=corrupted_cache,
@@ -226,37 +241,49 @@ def compute_stepwise_opd_losses(
         )
 
         if t % state_time_stride == 0:
-            state_terms.append(
-                _state_mse_from_caches(
-                    corrupted_cache=corrupted_cache,
-                    clean_cache=clean_cache,
-                    state_key=state_key,
-                )
+            state_term = _state_mse_from_caches(
+                corrupted_cache=next_corrupted_cache,
+                clean_cache=clean_cache,
+                state_key=state_key,
             )
+            state_sum = state_term if state_sum is None else state_sum + state_term
+            state_count += 1
 
-        kl_terms.append(
-            kl_from_logits(
-                student_logits=corr_logits_t,
-                teacher_logits=clean_logits_t,
-            )
+        kl_term = kl_from_logits(
+            student_logits=corr_logits_t,
+            teacher_logits=clean_logits_t,
         )
+        kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
 
         if ce_anchor_weight > 0.0:
-            ce_terms.append(
-                ce_from_logits(
-                    logits=corr_logits_t,
-                    targets=token_t.squeeze(1),
-                )
+            ce_term = ce_from_logits(
+                logits=corr_logits_t,
+                targets=token_t.squeeze(1),
             )
+            ce_sum = ce_term if ce_sum is None else ce_sum + ce_term
+            ce_count += 1
+
+        # Truncate history graph: gradients at step t+1 do not flow into step t.
+        corrupted_cache = _detach_tree(next_corrupted_cache)
 
     if model_was_training:
         model.train()
     else:
         model.eval()
 
-    kl_loss = torch.stack(kl_terms).mean()
-    state_loss = torch.stack(state_terms).mean() if state_terms else torch.zeros_like(kl_loss)
-    ce_anchor_loss = torch.stack(ce_terms).mean() if ce_terms else torch.zeros_like(kl_loss)
+    if kl_sum is None:
+        raise RuntimeError("No KL terms were collected")
+    kl_loss = kl_sum / continuation_len
+
+    if state_sum is not None and state_count > 0:
+        state_loss = state_sum / state_count
+    else:
+        state_loss = torch.zeros_like(kl_loss)
+
+    if ce_sum is not None and ce_count > 0:
+        ce_anchor_loss = ce_sum / ce_count
+    else:
+        ce_anchor_loss = torch.zeros_like(kl_loss)
 
     total = kl_loss + lambda_state * state_loss + ce_anchor_weight * ce_anchor_loss
     return OpdLossBundle(total=total, kl=kl_loss, state=state_loss, ce_anchor=ce_anchor_loss)
