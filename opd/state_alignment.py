@@ -25,6 +25,8 @@ def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
 
 
 def _detach_tree(obj):
+    if obj is None:
+        return None
     if isinstance(obj, torch.Tensor):
         return obj.detach()
     if isinstance(obj, list):
@@ -33,7 +35,12 @@ def _detach_tree(obj):
         return tuple(_detach_tree(item) for item in obj)
     if isinstance(obj, dict):
         return {key: _detach_tree(value) for key, value in obj.items()}
-    raise TypeError("unsupported detach object type")
+    # FLA officially uses fla.models.utils.Cache for past_key_values.
+    from fla.models.utils import Cache as FLACache
+    if isinstance(obj, FLACache):
+        detached_legacy = _detach_tree(obj.to_legacy_cache())
+        return FLACache.from_legacy_cache(detached_legacy)
+    raise TypeError(f"unsupported detach object type: {type(obj)}")
 
 
 def _extract_layer_state(layer_state: dict, state_key: str, layer_idx: int):

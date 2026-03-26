@@ -139,3 +139,12 @@
 - For `m-a-p/340M-20B-GatedDeltaNet-pure-baseline`, loading can report `unexpected_keys` like `model.layers.<i>.attn.D` across all layers.
 - `opd/model_loader.py` keeps strict fail-fast behavior for `missing_keys`, `mismatched_keys`, `error_msgs`, and any other unexpected keys.
 - Only `unexpected_keys` matching `model.layers.<i>.attn.D` are whitelisted and logged as ignored checkpoint-only keys.
+
+## 2026-03-26-16:05 : State detach now follows FLA official cache definition only
+- From FLA upstream `gated_deltanet` implementation, `past_key_values` is `fla.models.utils.Cache` (legacy tuple/list inputs are converted into this type in forward).
+- `opd/state_alignment.py` `_detach_tree` now supports official FLA `Cache` via `to_legacy_cache` -> recursive tensor detach -> `Cache.from_legacy_cache`.
+- Removed broader generic container fallback to keep behavior explicit and fail-fast for non-FLA cache types.
+
+## 2026-03-26-16:15 : FLA legacy cache detach must allow `None` leaves
+- `Cache.to_legacy_cache()` may include `None` entries for inactive state slots.
+- `_detach_tree` now treats `None` as a valid leaf (`None -> None`) before tensor/container recursion.
