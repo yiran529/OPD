@@ -110,7 +110,6 @@ def _compute_opd_loss(
         clean_prefix_tokens=clean_prefix,
         z_tokens=z_tokens,
         lambda_state=cfg.lambda_state,
-        ce_anchor_weight=cfg.ce_anchor_weight,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,
     )
@@ -200,7 +199,6 @@ def run_training(
             "loss_total": torch.zeros([], device=dist_env.device),
             "loss_kl": torch.zeros([], device=dist_env.device),
             "loss_state": torch.zeros([], device=dist_env.device),
-            "loss_ce_anchor": torch.zeros([], device=dist_env.device),
         }
 
         for _ in range(cfg.grad_accum_steps):
@@ -217,7 +215,6 @@ def run_training(
                     loss_total = _compute_baseline_ce(model, batch_tokens)
                     loss_kl = torch.zeros_like(loss_total)
                     loss_state = torch.zeros_like(loss_total)
-                    loss_ce_anchor = torch.zeros_like(loss_total)
                 else:
                     assert rollout_model is not None, "rollout_model is required for opd_kl"
                     opd_loss = _compute_opd_loss(
@@ -230,7 +227,6 @@ def run_training(
                     loss_total = opd_loss.total
                     loss_kl = opd_loss.kl
                     loss_state = opd_loss.state
-                    loss_ce_anchor = opd_loss.ce_anchor
 
             if not torch.isfinite(loss_total):
                 raise FloatingPointError(f"Non-finite loss encountered at step {global_step}: {loss_total.item()}")
@@ -244,7 +240,6 @@ def run_training(
             local_metrics["loss_total"] += loss_total.detach()
             local_metrics["loss_kl"] += loss_kl.detach()
             local_metrics["loss_state"] += loss_state.detach()
-            local_metrics["loss_ce_anchor"] += loss_ce_anchor.detach()
 
         if scaler is not None:
             scaler.unscale_(optimizer)
@@ -290,7 +285,6 @@ def run_training(
                         f"loss={mean_metrics['loss_total'].item():.6f} "
                         f"kl={mean_metrics['loss_kl'].item():.6f} "
                         f"state={mean_metrics['loss_state'].item():.6f} "
-                        f"ce_anchor={mean_metrics['loss_ce_anchor'].item():.6f} "
                         f"grad_norm={grad_norm_tensor.item():.4f} "
                         f"lr={scheduler.get_last_lr()[0]:.3e} "
                         f"tok/s={tokens_per_sec:.1f}"

@@ -36,7 +36,6 @@ warmup_steps: 500
 max_grad_norm: 1.0
 
 lambda_state: 0.1
-ce_anchor_weight: 0.0
 state_key: recurrent_state
 state_time_stride: 1
 opd_grad_through_prefix: true

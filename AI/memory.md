@@ -23,7 +23,7 @@
 - [x] theta_old是什么
 - [] max_length/chunking
 - [x] 应该切断rollout的tokens之间的梯度吗
-- [] 应该赋予接近corrupted tokens的loss低一些的权重？state MSE是不是太死了？
+- [x] 应该赋予接近corrupted tokens的loss低一些的权重？state MSE是不是太死了？
 - [] KL方向
 
 
@@ -101,3 +101,9 @@
   - `norm_loss=(||a||-||b||)^2`
   - `loss_state_t = w * (cos_loss + 0.01 * norm_loss)`, averaged across all state tensors in all layers.
 - `b` (clean path state) remains stop-grad (`detach`) and only corrupted-path state receives gradients.
+
+## 2026-03-26-11:00 : Remove CE anchor branch from OPD objective
+- Deleted `ce_anchor` from `OpdLossBundle` and removed `ce_from_logits` usage from `opd/state_alignment.py`.
+- `compute_stepwise_opd_losses` now returns only `total/kl/state`, with `total = kl + lambda_state * state`.
+- Removed `ce_anchor_weight` from config and default YAML, and removed CE metrics/logging from `opd/train_loop.py`.
+- This aligns implementation with the original KL + state design in `AI/ideas/1.md`.

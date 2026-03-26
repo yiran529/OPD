@@ -13,8 +13,8 @@
 - `opd/model_loader.py`: checks `flash-linear-attention` importability, loads tokenizer/model from HF with architecture assertion, and conditionally wraps model with PEFT LoRA (with fail-fast target matching and trainable-param checks).
 - `opd/fineweb_data.py`: FineWeb-Edu streaming dataset, rank sharding, token packing into fixed-length chunks.
 - `opd/rollout.py`: rollout model sync and fixed-length generation of `hat_y` and `z`.
-- `opd/losses.py`: shared loss primitives (`OpdLossBundle`, KL from logits, CE from logits).
-- `opd/state_alignment.py`: stepwise OPD loss on FLA cache states (`recurrent_state` etc.), computing KL + memory-state MSE in one serial continuation pass.
+- `opd/losses.py`: shared loss primitives (`OpdLossBundle`, KL from logits).
+- `opd/state_alignment.py`: stepwise OPD loss on FLA cache states (`recurrent_state` etc.), computing KL + state alignment loss in one serial continuation pass.
 - `opd/checkpoint.py`: checkpoint save/load with optimizer/scheduler/scaler/RNG states.
 - `opd/train_loop.py`: explicit training loop for `baseline_ce` and `opd_kl` objectives; optimizer/grad-clip operate only on trainable params (full or LoRA).
 

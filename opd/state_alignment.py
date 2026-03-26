@@ -6,7 +6,7 @@ from typing import Iterable, List
 import torch
 import torch.nn.functional as F
 
-from opd.losses import OpdLossBundle, ce_from_logits, kl_from_logits
+from opd.losses import OpdLossBundle, kl_from_logits
 
 
 def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
@@ -147,7 +147,6 @@ def compute_stepwise_opd_losses(
     clean_prefix_tokens: torch.Tensor,
     z_tokens: torch.Tensor,
     lambda_state: float,
-    ce_anchor_weight: float,
     state_key: str,
     state_time_stride: int,
 ) -> OpdLossBundle:
@@ -192,9 +191,7 @@ def compute_stepwise_opd_losses(
     # Stream accumulators keep loss construction explicit and avoid retaining per-step lists.
     kl_sum: torch.Tensor | None = None
     state_sum: torch.Tensor | None = None
-    ce_sum: torch.Tensor | None = None
     state_count = 0
-    ce_count = 0
 
     for t in range(continuation_len):
         token_t = z_tokens[:, t : t + 1]
@@ -233,14 +230,6 @@ def compute_stepwise_opd_losses(
         )
         kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
 
-        if ce_anchor_weight > 0.0:
-            ce_term = ce_from_logits(
-                logits=corr_logits_t,
-                targets=token_t.squeeze(1),
-            )
-            ce_sum = ce_term if ce_sum is None else ce_sum + ce_term
-            ce_count += 1
-
         # Truncate history graph: gradients at step t+1 do not flow into step t.
         corrupted_cache = _detach_tree(next_corrupted_cache)
 
@@ -257,10 +246,5 @@ def compute_stepwise_opd_losses(
     else:
         state_loss = torch.zeros_like(kl_loss)
 
-    if ce_sum is not None and ce_count > 0:
-        ce_anchor_loss = ce_sum / ce_count
-    else:
-        ce_anchor_loss = torch.zeros_like(kl_loss)
-
-    total = kl_loss + lambda_state * state_loss + ce_anchor_weight * ce_anchor_loss
-    return OpdLossBundle(total=total, kl=kl_loss, state=state_loss, ce_anchor=ce_anchor_loss)
+    total = kl_loss + lambda_state * state_loss
+    return OpdLossBundle(total=total, kl=kl_loss, state=state_loss)

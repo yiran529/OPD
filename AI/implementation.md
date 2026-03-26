@@ -21,8 +21,8 @@
 - Rollout:
   - `opd/rollout.py` maintains frozen `theta_old` and generates fixed-length `hat_y` and `z`.
 - Losses:
-  - `opd/losses.py` contains KL/CE primitives.
-  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean) and computes KL + memory-state MSE in one serial pass.
+  - `opd/losses.py` contains OPD loss bundle + KL primitive.
+  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean) and computes KL + state alignment loss in one serial pass.
 - Training loop:
   - `opd/train_loop.py` supports:
     - `baseline_ce` (plain CE finetune),
@@ -41,9 +41,9 @@
   - clean path cache initialized by `x + y` (teacher, stop-grad).
 - Continuation `z` is processed token-by-token; each step jointly computes:
   - KL between corrupted vs clean logits for current token.
-  - MSE between corrupted vs clean memory cache states for current step.
+  - state alignment between corrupted vs clean memory cache states for current step.
 - Loss:
-  - `L = L_kl + lambda_state * L_state (+ ce_anchor_weight * L_ce_anchor if enabled)`.
+  - `L = L_kl + lambda_state * L_state`.
 
 ## Current limitations (intentional for first pass)
 - PPO/PG objective is not implemented yet (only KL path).

@@ -47,7 +47,6 @@ class TrainConfig:
     max_grad_norm: float = 1.0
 
     lambda_state: float = 0.1
-    ce_anchor_weight: float = 0.0
     state_key: str = "recurrent_state"
     state_time_stride: int = 1
     opd_grad_through_prefix: bool = True
