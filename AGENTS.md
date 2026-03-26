@@ -86,8 +86,11 @@ Do not add silent fallbacks, defensive auto-recovery, or broad compatibility lay
 
 Prefer:
 - clear assertions,
-- explicit shape checks,
-- explicit error messages,
+- only check real assumptions,
+- prefer `assert` for simple invariants,
+- avoid verbose `raise`,
+- explicit shape checks when necessary,
+- explicit error messages when necessary,
 - narrow supported paths.
 
 If something is unsupported, it should fail clearly rather than degrade gracefully.

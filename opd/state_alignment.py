@@ -115,18 +115,25 @@ def _decode_one_token(
     return logits[:, 0, :], next_past_key_values
 
 
-def _state_mse_from_caches(
+def _state_alignment_loss_from_caches(
     corrupted_cache,
     clean_cache,
     state_key: str,
+    time_step: int,
+    total_steps: int,
 ) -> torch.Tensor:
     if len(corrupted_cache) != len(clean_cache):
         raise RuntimeError(
             "Cache layer count mismatch: "
             f"corrupted={len(corrupted_cache)} clean={len(clean_cache)}"
         )
+    if total_steps <= 0:
+        raise ValueError(f"total_steps must be positive, got {total_steps}")
+    if time_step < 0 or time_step >= total_steps:
+        raise ValueError(f"time_step out of range: time_step={time_step}, total_steps={total_steps}")
 
-    mse_terms: List[torch.Tensor] = []
+    time_weight = ((time_step + 1) / total_steps) ** 2
+    align_terms: List[torch.Tensor] = []
 
     for layer_idx in range(len(corrupted_cache)):
         corr_layer_state = _extract_layer_state(corrupted_cache[layer_idx], state_key, layer_idx)
@@ -150,17 +157,18 @@ def _state_mse_from_caches(
                     f"at layer={layer_idx} tensor={tensor_idx}: "
                     f"corrupted={tuple(corr_tensor.shape)} clean={tuple(clean_tensor.shape)}"
                 )
-            mse_terms.append(
-                F.mse_loss(
-                    corr_tensor.float(),
-                    clean_tensor.detach().float(),
-                    reduction="mean",
-                )
+
+            a = corr_tensor.float()
+            b = clean_tensor.detach().float()
+            cos_loss = 1.0 - F.cosine_similarity(a, b, dim=-1).mean()
+            norm_loss = ((a.norm(dim=-1) - b.norm(dim=-1)) ** 2).mean()
+            align_terms.append(
+                cos_loss + 0.01 * norm_loss
             )
 
-    if not mse_terms:
-        raise RuntimeError("No MSE terms collected from cache states")
-    return torch.stack(mse_terms).mean()
+    if not align_terms:
+        raise RuntimeError("No state alignment terms collected from cache states")
+    return time_weight * torch.stack(align_terms).mean()
 
 
 def compute_stepwise_opd_losses(
@@ -241,10 +249,12 @@ def compute_stepwise_opd_losses(
         )
 
         if t % state_time_stride == 0:
-            state_term = _state_mse_from_caches(
+            state_term = _state_alignment_loss_from_caches(
                 corrupted_cache=next_corrupted_cache,
                 clean_cache=clean_cache,
                 state_key=state_key,
+                time_step=t,
+                total_steps=continuation_len,
             )
             state_sum = state_term if state_sum is None else state_sum + state_term
             state_count += 1

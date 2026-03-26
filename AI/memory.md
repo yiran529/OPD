@@ -22,7 +22,7 @@
 - [] 应该用CE吗？
 - [x] theta_old是什么
 - [] max_length/chunking
-- [] 应该切断rollout的tokens之间的梯度吗
+- [x] 应该切断rollout的tokens之间的梯度吗
 - [] 应该赋予接近corrupted tokens的loss低一些的权重？state MSE是不是太死了？
 - [] KL方向
 
@@ -92,3 +92,12 @@
 - `compute_stepwise_opd_losses` now hard-codes stop-grad through corrupted-prefix prefill (`x + y_hat`) to prevent gradient flow into prefix history.
 - During continuation decoding, corrupted cache is detached every step before reuse, so gradients from `z_t` no longer backprop through `z_{<t}`.
 - The goal is to avoid recurrent graph chaining and reduce memory blow-up risk while keeping per-step KL/state supervision.
+
+## 2026-03-26-10:30 : Replace state MSE with time-weighted cosine+norm objective
+- State alignment term in `opd/state_alignment.py` no longer uses MSE.
+- Per-step state loss is now:
+  - `w=((t+1)/T)^2`
+  - `cos_loss=1-cosine_similarity(a,b)`
+  - `norm_loss=(||a||-||b||)^2`
+  - `loss_state_t = w * (cos_loss + 0.01 * norm_loss)`, averaged across all state tensors in all layers.
+- `b` (clean path state) remains stop-grad (`detach`) and only corrupted-path state receives gradients.
