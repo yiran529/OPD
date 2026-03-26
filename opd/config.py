@@ -29,6 +29,8 @@ class TrainConfig:
     dataset_split: str = "train"
     dataset_text_field: str = "text"
     shuffle_buffer_size: int = 10000
+    sanity_num_docs: int = 0
+    sanity_disable_shuffle: bool = False
 
     objective: str = "opd_kl"
     context_len: int = 1024
@@ -119,6 +121,8 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("lora_target_modules must be a list")
     if any((not isinstance(name, str) or not name) for name in cfg.lora_target_modules):
         raise ValueError("lora_target_modules must be a list of non-empty strings")
+    if cfg.sanity_num_docs < 0:
+        raise ValueError("sanity_num_docs must be >= 0")
 
 
 def load_config(path: str) -> TrainConfig:

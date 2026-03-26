@@ -18,6 +18,8 @@ dataset_config: default
 dataset_split: train
 dataset_text_field: text
 shuffle_buffer_size: 10000
+sanity_num_docs: 0
+sanity_disable_shuffle: false
 
 objective: opd_kl
 context_len: 1024

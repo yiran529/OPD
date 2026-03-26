@@ -25,11 +25,14 @@ class FineWebPackedDataset(IterableDataset):
             streaming=True,
         )
 
-        if self.cfg.shuffle_buffer_size > 0:
+        if self.cfg.shuffle_buffer_size > 0 and not self.cfg.sanity_disable_shuffle:
             stream = stream.shuffle(
                 buffer_size=self.cfg.shuffle_buffer_size,
                 seed=self.cfg.seed,
             )
+
+        if self.cfg.sanity_num_docs > 0:
+            stream = stream.take(self.cfg.sanity_num_docs)
 
         if self.world_size > 1:
             stream = stream.shard(num_shards=self.world_size, index=self.rank)
