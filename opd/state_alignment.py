@@ -72,9 +72,15 @@ def _prefill_cache(
             output_hidden_states=False,
             return_dict=True,
         )
+    logits = getattr(outputs, "logits", None)
+    assert logits is not None, "prefill: logits missing"
+    assert logits.dim() == 3 and logits.size(1) == prefix_tokens.size(1), (
+        "prefill logits shape mismatch: "
+        f"expected [batch,{prefix_tokens.size(1)},vocab], got shape={tuple(logits.shape)}"
+    )
     past_key_values = getattr(outputs, "past_key_values", None)
     _assert_valid_cache(past_key_values, where="prefill")
-    return past_key_values
+    return logits[:, -1, :], past_key_values
 
 
 def _decode_one_token(
@@ -117,6 +123,9 @@ def _state_alignment_loss_from_caches(
     assert total_steps > 0, "total_steps must be positive"
     assert 0 <= time_step < total_steps, "time_step out of range"
 
+    # State alignment at continuation step t:
+    #   L_state(t) = w_t * mean_{layers,tensors} [ (1 - cos(a_t, b_t)) + 0.01 * (||a_t|| - ||b_t||)^2 ]
+    # where a_t is corrupted-path state and b_t is clean-path state (stop-grad), and w_t = ((t+1)/T)^2 with t=time_step, T=total_steps.
     time_weight = ((time_step + 1) / total_steps) ** 2
     align_terms: List[torch.Tensor] = []
 
@@ -179,14 +188,14 @@ def compute_stepwise_opd_losses(
     if model_was_training:
         model.train()
     # Hard-code prefix stop-grad: do not backprop through x + y_hat prefill.
-    corrupted_cache = _prefill_cache(
+    corr_prev_logits, corrupted_cache = _prefill_cache(
         model=model,
         prefix_tokens=corrupted_prefix,
         requires_grad=False,
     )
 
     model.eval()
-    clean_cache = _prefill_cache(
+    clean_prev_logits, clean_cache = _prefill_cache(
         model=model,
         prefix_tokens=clean_prefix,
         requires_grad=False,
@@ -201,11 +210,19 @@ def compute_stepwise_opd_losses(
     state_count = 0
 
     for t in range(continuation_len):
+        # KL at continuation step t (supervise current token z_t):
+        #   L_KL(t) = KL( p_theta(. | x, y_hat, z_{<t}) || sg(p_theta(. | x, y, z_{<t})) )
+        kl_term = kl_from_logits(
+            student_logits=corr_prev_logits,
+            teacher_logits=clean_prev_logits,
+        )
+        kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
+
         token_t = z_tokens[:, t : t + 1]
 
         if model_was_training:
             model.train()
-        corr_logits_t, next_corrupted_cache = _decode_one_token(
+        corr_next_logits, next_corrupted_cache = _decode_one_token(
             model=model,
             token=token_t,
             past_key_values=corrupted_cache,
@@ -213,7 +230,7 @@ def compute_stepwise_opd_losses(
         )
 
         model.eval()
-        clean_logits_t, clean_cache = _decode_one_token(
+        clean_next_logits, clean_cache = _decode_one_token(
             model=model,
             token=token_t,
             past_key_values=clean_cache,
@@ -231,11 +248,8 @@ def compute_stepwise_opd_losses(
             state_sum = state_term if state_sum is None else state_sum + state_term
             state_count += 1
 
-        kl_term = kl_from_logits(
-            student_logits=corr_logits_t,
-            teacher_logits=clean_logits_t,
-        )
-        kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
+        corr_prev_logits = corr_next_logits
+        clean_prev_logits = clean_next_logits
 
         # Truncate history graph: gradients at step t+1 do not flow into step t.
         corrupted_cache = _detach_tree(next_corrupted_cache)
