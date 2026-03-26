@@ -5,7 +5,7 @@ import random
 import time
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import torch
@@ -145,6 +145,8 @@ def run_training(
         sync_rollout_model(rollout_model, raw_model)
 
     optimizer, trainable_params = _build_optimizer(model, cfg)
+    total_params = 0
+    trainable_param_count = 0
     if dist_env.is_main:
         total_params = sum(param.numel() for param in model.parameters())
         trainable_param_count = sum(param.numel() for param in trainable_params)
@@ -156,6 +158,26 @@ def run_training(
             f"trainable_ratio={100.0 * trainable_param_count / max(total_params, 1):.4f}%",
             flush=True,
         )
+
+    wandb_log = lambda *_args, **_kwargs: None
+    wandb_finish = lambda: None
+    if dist_env.is_main and cfg.wandb_enabled and cfg.wandb_mode != "disabled":
+        import wandb
+        wandb_run: Any = wandb.init(
+            project=cfg.wandb_project,
+            entity=cfg.wandb_entity,
+            name=cfg.wandb_run_name or cfg.run_name,
+            tags=cfg.wandb_tags or None,
+            mode=cfg.wandb_mode,
+            config=cfg.as_dict(),
+            dir=str(run_dir),
+        )
+        wandb_run.summary["world_size"] = dist_env.world_size
+        wandb_run.summary["objective"] = cfg.objective
+        wandb_run.summary["total_params"] = total_params
+        wandb_run.summary["trainable_params"] = trainable_param_count
+        wandb_log = wandb_run.log
+        wandb_finish = wandb_run.finish
 
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -277,6 +299,7 @@ def run_training(
                 * dist_env.world_size
             )
             tokens_per_sec = tokens_per_step / elapsed
+            current_lr = scheduler.get_last_lr()[0]
 
             if dist_env.is_main:
                 print(
@@ -286,10 +309,21 @@ def run_training(
                         f"kl={mean_metrics['loss_kl'].item():.6f} "
                         f"state={mean_metrics['loss_state'].item():.6f} "
                         f"grad_norm={grad_norm_tensor.item():.4f} "
-                        f"lr={scheduler.get_last_lr()[0]:.3e} "
+                        f"lr={current_lr:.3e} "
                         f"tok/s={tokens_per_sec:.1f}"
                     ),
                     flush=True,
+                )
+                wandb_log(
+                    {
+                        "loss_total": mean_metrics["loss_total"].item(),
+                        "loss_kl": mean_metrics["loss_kl"].item(),
+                        "loss_state": mean_metrics["loss_state"].item(),
+                        "grad_norm": grad_norm_tensor.item(),
+                        "lr": current_lr,
+                        "tokens_per_sec": tokens_per_sec,
+                    },
+                    step=global_step,
                 )
 
         should_save = global_step % cfg.save_interval == 0 or global_step == cfg.max_steps
@@ -309,3 +343,4 @@ def run_training(
                 )
                 print(f"Saved checkpoint: {save_path}", flush=True)
             barrier()
+    wandb_finish()
