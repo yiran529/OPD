@@ -46,5 +46,4 @@ LoRA config keys:
 
 For `opd_kl`, state alignment is cache-based (memory state from `past_key_values`) with:
 - `state_key` (default `recurrent_state`)
-- `state_time_stride` (compute state MSE every N continuation steps)
-- `opd_grad_through_prefix` (whether corrupted-prefix prefill keeps gradients)
+- `state_time_stride` (compute state alignment loss every N continuation steps)

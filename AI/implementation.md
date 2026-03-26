@@ -56,4 +56,4 @@
 ## Immediate next steps
 - Run short `baseline_ce` sanity job to verify end-to-end loading/data/backward/logging.
 - Run short `opd_kl` sanity job and confirm finite `loss_kl`/`loss_state`.
-- Benchmark `state_time_stride` and `opd_grad_through_prefix` trade-offs for speed/memory vs optimization fidelity.
+- Benchmark `state_time_stride` trade-offs for speed/memory vs optimization fidelity.

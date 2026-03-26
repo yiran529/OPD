@@ -38,7 +38,6 @@ max_grad_norm: 1.0
 lambda_state: 0.1
 state_key: recurrent_state
 state_time_stride: 1
-opd_grad_through_prefix: true
 
 rollout_temperature: 1.0
 rollout_top_p: 1.0

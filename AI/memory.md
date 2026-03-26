@@ -19,7 +19,7 @@
 - [x] 是否真的会用到FLA中的算子？
 - [x] 应该用LoRA 
 - [] training script是不是仿照框架(比如 https://github.com/jiaweizzhao/GaLore/blob/master/torchrun_main.py)写的
-- [] 应该用CE吗？
+- [] 应该用混合AR训练吗
 - [x] theta_old是什么
 - [] max_length/chunking
 - [x] 应该切断rollout的tokens之间的梯度吗
@@ -48,7 +48,6 @@
 - Added config knobs:
   - `state_key` (default `recurrent_state`)
   - `state_time_stride` (default `1`)
-  - `opd_grad_through_prefix` (default `true`)
 - Implementation is fail-fast for cache/state structure mismatch (missing key, `None` state, layer/state shape mismatch).
 
 ## 2026-03-25-18:05 : Check on FLA accelerated operators usage
@@ -107,3 +106,7 @@
 - `compute_stepwise_opd_losses` now returns only `total/kl/state`, with `total = kl + lambda_state * state`.
 - Removed `ce_anchor_weight` from config and default YAML, and removed CE metrics/logging from `opd/train_loop.py`.
 - This aligns implementation with the original KL + state design in `AI/ideas/1.md`.
+
+## 2026-03-26-11:20 : Remove stale `opd_grad_through_prefix` knob
+- `opd_grad_through_prefix` was stale after gradient-through-prefix was hard-disabled in `opd/state_alignment.py`.
+- Removed this knob from `TrainConfig`, default YAML, and docs to avoid configuration illusion.
