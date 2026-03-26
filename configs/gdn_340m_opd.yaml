@@ -2,7 +2,7 @@ run_name: gdn340m-fineweb-opd
 output_dir: outputs
 seed: 42
 
-model_name: m-a-p/340M-20B-GatedDeltaNet-pure-baseline
+model_name: /data/wyr/models/hf/m-a-p/340M-20B-GatedDeltaNet-pure-baseline
 tokenizer_name: null
 expected_architecture: GatedDeltaNetForCausalLM
 trust_remote_code: true

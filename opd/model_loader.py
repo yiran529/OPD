@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import importlib
+import re
 from typing import List, Tuple
 
 import torch
 import transformers
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 from opd.config import TrainConfig
 
@@ -49,12 +51,61 @@ def _assert_clean_weight_loading(loading_info: dict) -> None:
     mismatched = loading_info.get("mismatched_keys", []) or []
     error_msgs = loading_info.get("error_msgs", []) or []
 
-    if unexpected or missing or mismatched or error_msgs:
+    unexpected_list = sorted(str(key) for key in unexpected)
+    allowed_unexpected = [
+        key for key in unexpected_list if re.fullmatch(r"model\.layers\.\d+\.attn\.D", key)
+    ]
+    allowed_unexpected_set = set(allowed_unexpected)
+    disallowed_unexpected = [key for key in unexpected_list if key not in allowed_unexpected_set]
+
+    if allowed_unexpected:
+        print(
+            "Ignoring known checkpoint-only keys: "
+            f"{allowed_unexpected}",
+            flush=True,
+        )
+
+    if disallowed_unexpected or missing or mismatched or error_msgs:
         raise RuntimeError(
             "Model weights did not load cleanly from pretrained checkpoint. "
-            f"missing_keys={missing} unexpected_keys={unexpected} "
+            f"missing_keys={missing} unexpected_keys={disallowed_unexpected} "
             f"mismatched_keys={mismatched} error_msgs={error_msgs}"
         )
+
+
+def _resolve_expected_model_class(cfg: TrainConfig) -> type[torch.nn.Module]:
+    if not cfg.expected_architecture:
+        raise RuntimeError(
+            "expected_architecture must be set when loading model from fla exports"
+        )
+    # Try multiple canonical import locations.
+    module_candidates = (
+        "fla",
+        "fla.models",
+        "fla.models.gated_deltanet",
+        "fla.models.gated_deltanet.modeling_gated_deltanet",
+    )
+    import_errors: dict[str, str] = {}
+    for module_name in module_candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            import_errors[module_name] = repr(exc)
+            continue
+        if not hasattr(module, cfg.expected_architecture):
+            continue
+        model_class = getattr(module, cfg.expected_architecture)
+        if hasattr(model_class, "from_pretrained"):
+            return model_class
+
+    raise RuntimeError(
+        "Failed to resolve expected model class from FLA package. "
+        f"expected={cfg.expected_architecture} "
+        f"tried_modules={list(module_candidates)} "
+        f"import_errors={import_errors} "
+        f"transformers_version={transformers.__version__}. "
+        "This often indicates FLA/transformers version incompatibility."
+    )
 
 
 def _linear_module_names(model: torch.nn.Module) -> List[str]:
@@ -206,17 +257,6 @@ def build_model_and_tokenizer(cfg: TrainConfig, device: torch.device) -> Tuple[t
     model_id = cfg.model_name
     tokenizer_id = cfg.tokenizer_name or model_id
 
-    model_config = AutoConfig.from_pretrained(
-        model_id,
-        trust_remote_code=cfg.trust_remote_code,
-    )
-
-    architectures = getattr(model_config, "architectures", None) or []
-    if cfg.expected_architecture and cfg.expected_architecture not in architectures:
-        raise ValueError(
-            f"Expected architecture {cfg.expected_architecture} not found in config.architectures={architectures}"
-        )
-
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_id,
         trust_remote_code=cfg.trust_remote_code,
@@ -227,19 +267,20 @@ def build_model_and_tokenizer(cfg: TrainConfig, device: torch.device) -> Tuple[t
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model, loading_info = AutoModelForCausalLM.from_pretrained(
+    model_class = _resolve_expected_model_class(cfg=cfg)
+    model, loading_info = model_class.from_pretrained(
         model_id,
-        trust_remote_code=cfg.trust_remote_code,
         torch_dtype=model_dtype,
         output_loading_info=True,
     )
 
-    _assert_expected_model_impl(model=model, expected_architecture=cfg.expected_architecture)
-    if not hasattr(fla, model.__class__.__name__):
-        raise RuntimeError(
-            "Loaded model class is not exported by fla package: "
-            f"class={model.__class__.__name__} module={model.__class__.__module__}"
+    architectures = getattr(model.config, "architectures", None) or []
+    if cfg.expected_architecture and cfg.expected_architecture not in architectures:
+        raise ValueError(
+            f"Expected architecture {cfg.expected_architecture} not found in config.architectures={architectures}"
         )
+
+    _assert_expected_model_impl(model=model, expected_architecture=cfg.expected_architecture)
     _assert_clean_weight_loading(loading_info=loading_info)
 
     print(

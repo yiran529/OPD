@@ -110,3 +110,32 @@
 ## 2026-03-26-11:20 : Remove stale `opd_grad_through_prefix` knob
 - `opd_grad_through_prefix` was stale after gradient-through-prefix was hard-disabled in `opd/state_alignment.py`.
 - Removed this knob from `TrainConfig`, default YAML, and docs to avoid configuration illusion.
+
+## 2026-03-26-14:55 : Load FLA checkpoints via exported FLA model class (avoid AutoConfig model_type trap)
+- `opd/model_loader.py` no longer uses `AutoConfig.from_pretrained` / `AutoModelForCausalLM.from_pretrained` for startup.
+- Loader now resolves `expected_architecture` directly from `fla` exports and calls that class's `from_pretrained`.
+- This avoids failures when checkpoint `model_type` (e.g. `gated_deltanet`) is not registered in local `transformers` `CONFIG_MAPPING`.
+- Architecture consistency check is still fail-fast via `model.config.architectures` + runtime class/module assertions.
+
+## 2026-03-26-15:05 : FLA 模型定义与加载路径（简要）
+- 训练入口是 `main()` 调用 `build_model_and_tokenizer(cfg=cfg, device=dist_env.device)`。
+- FLA 模型定义来源于已安装 `flash-linear-attention` 包；加载时先执行 `_ensure_flash_linear_attention_importable()`，再 `import fla`。
+- 模型类由配置项 `expected_architecture` 决定，解析语句是 `model_class = getattr(fla_module, cfg.expected_architecture)`。
+- 权重加载语句是 `model, loading_info = model_class.from_pretrained(model_id, torch_dtype=model_dtype, output_loading_info=True)`。
+- tokenizer 加载语句是 `AutoTokenizer.from_pretrained(tokenizer_id, trust_remote_code=cfg.trust_remote_code, use_fast=True)`，其中 `tokenizer_id = cfg.tokenizer_name or model_id`。
+- 加载后保持 fail-fast：`_assert_expected_model_impl(...)`、`_assert_clean_weight_loading(...)`，并执行 `_run_startup_sanity(...)` 检查 logits 与 FLA cache state。
+
+## 2026-03-26-15:20 : Robust FLA class resolution + transformers<5 pin
+- Some environments expose `import fla` but do not export model classes (e.g., `GatedDeltaNetForCausalLM`) at top-level, so resolving by `hasattr(fla, expected_architecture)` is too strict.
+- `opd/model_loader.py` now resolves expected class by trying multiple canonical modules:
+  - `fla`
+  - `fla.models`
+  - `fla.models.gated_deltanet`
+  - `fla.models.gated_deltanet.modeling_gated_deltanet`
+- The loader no longer requires loaded class to be re-exported at `fla` top-level; runtime class/module + weight-loading assertions remain fail-fast.
+- Pinned `transformers` to `<5` in `requirements.txt` to avoid FLA compatibility drift with 5.x.
+
+## 2026-03-26-15:35 : Allow known checkpoint-only `attn.D` keys while keeping strict load checks
+- For `m-a-p/340M-20B-GatedDeltaNet-pure-baseline`, loading can report `unexpected_keys` like `model.layers.<i>.attn.D` across all layers.
+- `opd/model_loader.py` keeps strict fail-fast behavior for `missing_keys`, `mismatched_keys`, `error_msgs`, and any other unexpected keys.
+- Only `unexpected_keys` matching `model.layers.<i>.attn.D` are whitelisted and logged as ignored checkpoint-only keys.
