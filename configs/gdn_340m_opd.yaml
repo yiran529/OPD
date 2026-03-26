@@ -13,8 +13,8 @@ lora_alpha: 32
 lora_dropout: 0.05
 lora_target_modules: []
 
-dataset_name: HuggingFaceFW/fineweb-edu
-dataset_config: sample-100BT
+dataset_name: /data/wyr/datasets/fineweb-edu-100b
+dataset_config: default
 dataset_split: train
 dataset_text_field: text
 shuffle_buffer_size: 10000
