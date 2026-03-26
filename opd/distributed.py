@@ -28,8 +28,7 @@ def init_distributed() -> DistEnv:
 
     is_distributed = world_size > 1
     if is_distributed:
-        if not torch.cuda.is_available():
-            raise RuntimeError("DDP with WORLD_SIZE>1 requires CUDA")
+        assert torch.cuda.is_available(), "world_size>1 requires cuda"
         dist.init_process_group(backend="nccl")
         torch.cuda.set_device(local_rank)
 

@@ -42,8 +42,7 @@ class FineWebPackedDataset(IterableDataset):
 
     def __iter__(self) -> Iterator[torch.Tensor]:
         eos_token_id = self.tokenizer.eos_token_id
-        if eos_token_id is None:
-            raise ValueError("Tokenizer must provide eos_token_id")
+        assert eos_token_id is not None, "tokenizer must provide eos_token_id"
 
         seq_plus_one = self.cfg.sequence_plus_one
         seq_len = self.cfg.sequence_length
@@ -53,11 +52,9 @@ class FineWebPackedDataset(IterableDataset):
         text_field = self.cfg.dataset_text_field
 
         for row in stream:
-            if text_field not in row:
-                raise KeyError(f"Missing text field '{text_field}' in dataset row")
+            assert text_field in row, "missing dataset text field"
             text = row[text_field]
-            if not isinstance(text, str):
-                raise TypeError(f"Expected str text, got {type(text)}")
+            assert isinstance(text, str), "dataset text must be str"
             if not text:
                 continue
 
@@ -74,8 +71,7 @@ class FineWebPackedDataset(IterableDataset):
 
 
 def _collate_chunks(chunks: List[torch.Tensor]) -> torch.Tensor:
-    if not chunks:
-        raise ValueError("Empty chunk list in collate")
+    assert chunks, "empty chunk list"
     return torch.stack(chunks, dim=0)
 
 

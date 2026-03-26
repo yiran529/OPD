@@ -46,12 +46,10 @@ def _autocast_context(cfg: TrainConfig, device: torch.device):
 
 
 def _split_batch_segments(batch_tokens: torch.Tensor, cfg: TrainConfig) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if batch_tokens.dim() != 2:
-        raise ValueError(f"Expected [batch, seq+1], got shape {tuple(batch_tokens.shape)}")
-    if batch_tokens.size(1) != cfg.sequence_plus_one:
-        raise ValueError(
-            f"Unexpected sequence length {batch_tokens.size(1)}; expected {cfg.sequence_plus_one}"
-        )
+    assert batch_tokens.dim() == 2, f"batch_tokens shape mismatch: expected rank=2 [batch,seq+1], got shape={tuple(batch_tokens.shape)}"
+    assert batch_tokens.size(1) == cfg.sequence_plus_one, (
+        f"sequence length mismatch: expected={cfg.sequence_plus_one} got={batch_tokens.size(1)}"
+    )
 
     context = batch_tokens[:, : cfg.context_len]
     clean_prefix = batch_tokens[:, cfg.context_len : cfg.context_len + cfg.prefix_len]
@@ -67,8 +65,7 @@ def _build_optimizer(
     cfg: TrainConfig,
 ) -> Tuple[torch.optim.Optimizer, List[torch.nn.Parameter]]:
     trainable_params = [param for param in model.parameters() if param.requires_grad]
-    if not trainable_params:
-        raise RuntimeError("No trainable parameters found. Check finetune_mode and LoRA config.")
+    assert trainable_params, "no trainable parameters"
 
     optimizer = torch.optim.AdamW(
         trainable_params,
@@ -222,8 +219,7 @@ def run_training(
                     loss_state = torch.zeros_like(loss_total)
                     loss_ce_anchor = torch.zeros_like(loss_total)
                 else:
-                    if rollout_model is None:
-                        raise RuntimeError("rollout_model is required for opd_kl objective")
+                    assert rollout_model is not None, "rollout_model is required for opd_kl"
                     opd_loss = _compute_opd_loss(
                         model=model,
                         rollout_model=rollout_model,

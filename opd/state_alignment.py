@@ -21,7 +21,7 @@ def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
         for key in sorted(state_obj.keys()):
             yield from _iter_state_tensors(state_obj[key])
         return
-    raise TypeError(f"Unsupported state object type: {type(state_obj)}")
+    raise TypeError("unsupported state object type")
 
 
 def _detach_tree(obj):
@@ -33,33 +33,20 @@ def _detach_tree(obj):
         return tuple(_detach_tree(item) for item in obj)
     if isinstance(obj, dict):
         return {key: _detach_tree(value) for key, value in obj.items()}
-    raise TypeError(f"Unsupported detach object type: {type(obj)}")
+    raise TypeError("unsupported detach object type")
 
 
 def _extract_layer_state(layer_state: dict, state_key: str, layer_idx: int):
-    if not isinstance(layer_state, dict):
-        raise TypeError(
-            "Expected cache layer state to be dict, "
-            f"got type={type(layer_state)} at layer={layer_idx}"
-        )
-    if state_key not in layer_state:
-        raise KeyError(
-            f"Missing state_key='{state_key}' at layer={layer_idx}; "
-            f"available_keys={sorted(layer_state.keys())}"
-        )
+    assert isinstance(layer_state, dict), f"layer {layer_idx}: state must be dict"
+    assert state_key in layer_state, f"layer {layer_idx}: missing state_key={state_key}"
     state_obj = layer_state[state_key]
-    if state_obj is None:
-        raise RuntimeError(
-            f"Cache state is None for state_key='{state_key}' at layer={layer_idx}"
-        )
+    assert state_obj is not None, f"layer {layer_idx}: state is None"
     return state_obj
 
 
 def _assert_valid_cache(past_key_values, where: str) -> None:
-    if past_key_values is None:
-        raise RuntimeError(f"{where}: past_key_values is None")
-    if len(past_key_values) == 0:
-        raise RuntimeError(f"{where}: past_key_values is empty")
+    assert past_key_values is not None, f"{where}: past_key_values is None"
+    assert len(past_key_values) > 0, f"{where}: past_key_values is empty"
 
 
 def _prefill_cache(
@@ -67,10 +54,8 @@ def _prefill_cache(
     prefix_tokens: torch.Tensor,
     requires_grad: bool,
 ):
-    if prefix_tokens.dim() != 2:
-        raise ValueError(f"Expected [batch, prefix_len], got shape {tuple(prefix_tokens.shape)}")
-    if prefix_tokens.size(1) <= 0:
-        raise ValueError("prefix_tokens must have positive length")
+    assert prefix_tokens.dim() == 2, f"prefix_tokens shape mismatch: expected rank=2, got shape={tuple(prefix_tokens.shape)}"
+    assert prefix_tokens.size(1) > 0, "prefix_tokens must be non-empty"
 
     grad_ctx = nullcontext() if requires_grad else torch.no_grad()
     with grad_ctx:
@@ -91,8 +76,7 @@ def _decode_one_token(
     past_key_values,
     requires_grad: bool,
 ):
-    if token.dim() != 2 or token.size(1) != 1:
-        raise ValueError(f"Expected token shape [batch, 1], got {tuple(token.shape)}")
+    assert token.dim() == 2 and token.size(1) == 1, f"token shape mismatch: expected [batch,1], got shape={tuple(token.shape)}"
 
     grad_ctx = nullcontext() if requires_grad else torch.no_grad()
     with grad_ctx:
@@ -105,10 +89,10 @@ def _decode_one_token(
         )
 
     logits = getattr(outputs, "logits", None)
-    if logits is None:
-        raise RuntimeError("decode_one_token: logits is missing")
-    if logits.dim() != 3 or logits.size(1) != 1:
-        raise RuntimeError(f"decode_one_token: expected logits [batch,1,vocab], got {tuple(logits.shape)}")
+    assert logits is not None, "decode_one_token: logits missing"
+    assert logits.dim() == 3 and logits.size(1) == 1, (
+        f"decode_one_token logits shape mismatch: expected [batch,1,vocab], got shape={tuple(logits.shape)}"
+    )
 
     next_past_key_values = getattr(outputs, "past_key_values", None)
     _assert_valid_cache(next_past_key_values, where="decode_one_token")
@@ -122,15 +106,9 @@ def _state_alignment_loss_from_caches(
     time_step: int,
     total_steps: int,
 ) -> torch.Tensor:
-    if len(corrupted_cache) != len(clean_cache):
-        raise RuntimeError(
-            "Cache layer count mismatch: "
-            f"corrupted={len(corrupted_cache)} clean={len(clean_cache)}"
-        )
-    if total_steps <= 0:
-        raise ValueError(f"total_steps must be positive, got {total_steps}")
-    if time_step < 0 or time_step >= total_steps:
-        raise ValueError(f"time_step out of range: time_step={time_step}, total_steps={total_steps}")
+    assert len(corrupted_cache) == len(clean_cache), "cache layer count mismatch"
+    assert total_steps > 0, "total_steps must be positive"
+    assert 0 <= time_step < total_steps, "time_step out of range"
 
     time_weight = ((time_step + 1) / total_steps) ** 2
     align_terms: List[torch.Tensor] = []
@@ -142,21 +120,13 @@ def _state_alignment_loss_from_caches(
         corr_tensors = list(_iter_state_tensors(corr_layer_state))
         clean_tensors = list(_iter_state_tensors(clean_layer_state))
 
-        if len(corr_tensors) != len(clean_tensors):
-            raise RuntimeError(
-                "State tensor arity mismatch at layer "
-                f"{layer_idx}: corrupted={len(corr_tensors)} clean={len(clean_tensors)}"
-            )
-        if len(corr_tensors) == 0:
-            raise RuntimeError(f"No state tensors found at layer={layer_idx} key={state_key}")
+        assert len(corr_tensors) == len(clean_tensors), f"layer {layer_idx}: state tensor arity mismatch"
+        assert len(corr_tensors) > 0, f"layer {layer_idx}: no state tensors"
 
         for tensor_idx, (corr_tensor, clean_tensor) in enumerate(zip(corr_tensors, clean_tensors)):
-            if corr_tensor.shape != clean_tensor.shape:
-                raise RuntimeError(
-                    "State tensor shape mismatch "
-                    f"at layer={layer_idx} tensor={tensor_idx}: "
-                    f"corrupted={tuple(corr_tensor.shape)} clean={tuple(clean_tensor.shape)}"
-                )
+            assert corr_tensor.shape == clean_tensor.shape, (
+                f"layer {layer_idx} tensor {tensor_idx} shape mismatch: expected={tuple(clean_tensor.shape)} got={tuple(corr_tensor.shape)}"
+            )
 
             a = corr_tensor.float()
             b = clean_tensor.detach().float()
@@ -166,8 +136,7 @@ def _state_alignment_loss_from_caches(
                 cos_loss + 0.01 * norm_loss
             )
 
-    if not align_terms:
-        raise RuntimeError("No state alignment terms collected from cache states")
+    assert align_terms, "no state alignment terms"
     return time_weight * torch.stack(align_terms).mean()
 
 
@@ -182,20 +151,19 @@ def compute_stepwise_opd_losses(
     state_key: str,
     state_time_stride: int,
 ) -> OpdLossBundle:
-    if context_tokens.dim() != 2:
-        raise ValueError(f"Expected context_tokens [batch, context_len], got {tuple(context_tokens.shape)}")
-    if corrupted_prefix_tokens.dim() != 2 or clean_prefix_tokens.dim() != 2:
-        raise ValueError("Expected prefix tensors to be rank-2")
-    if z_tokens.dim() != 2:
-        raise ValueError(f"Expected z_tokens [batch, continuation_len], got {tuple(z_tokens.shape)}")
-    if context_tokens.size(0) != z_tokens.size(0):
-        raise ValueError("Batch size mismatch between context_tokens and z_tokens")
-    if state_time_stride <= 0:
-        raise ValueError(f"state_time_stride must be positive, got {state_time_stride}")
+    assert context_tokens.dim() == 2, f"context_tokens shape mismatch: expected rank=2, got shape={tuple(context_tokens.shape)}"
+    assert corrupted_prefix_tokens.dim() == 2, (
+        f"corrupted_prefix_tokens shape mismatch: expected rank=2, got shape={tuple(corrupted_prefix_tokens.shape)}"
+    )
+    assert clean_prefix_tokens.dim() == 2, (
+        f"clean_prefix_tokens shape mismatch: expected rank=2, got shape={tuple(clean_prefix_tokens.shape)}"
+    )
+    assert z_tokens.dim() == 2, f"z_tokens shape mismatch: expected rank=2, got shape={tuple(z_tokens.shape)}"
+    assert context_tokens.size(0) == z_tokens.size(0), "batch size mismatch"
+    assert state_time_stride > 0, "state_time_stride must be positive"
 
     continuation_len = z_tokens.size(1)
-    if continuation_len <= 0:
-        raise ValueError("z_tokens must have positive continuation length")
+    assert continuation_len > 0, "z_tokens must be non-empty"
 
     corrupted_prefix = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
     clean_prefix = torch.cat([context_tokens, clean_prefix_tokens], dim=1)
@@ -281,8 +249,7 @@ def compute_stepwise_opd_losses(
     else:
         model.eval()
 
-    if kl_sum is None:
-        raise RuntimeError("No KL terms were collected")
+    assert kl_sum is not None, "no kl terms"
     kl_loss = kl_sum / continuation_len
 
     if state_sum is not None and state_count > 0:

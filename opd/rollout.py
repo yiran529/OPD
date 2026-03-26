@@ -26,15 +26,12 @@ def generate_rollout_tokens(
     top_p: float,
     pad_token_id: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    if context_tokens.dim() != 2:
-        raise ValueError(f"Expected [batch, context_len], got shape {tuple(context_tokens.shape)}")
+    assert context_tokens.dim() == 2, f"context_tokens shape mismatch: expected rank=2, got shape={tuple(context_tokens.shape)}"
 
     total_new = prefix_len + continuation_len
-    if total_new <= 0:
-        raise ValueError("prefix_len + continuation_len must be positive")
+    assert total_new > 0, "prefix_len + continuation_len must be positive"
 
-    if pad_token_id is None:
-        raise ValueError("pad_token_id must be set for generation")
+    assert pad_token_id is not None, "pad_token_id is required"
 
     do_sample = temperature > 0.0
     generation_kwargs = {
@@ -55,18 +52,14 @@ def generate_rollout_tokens(
 
     generated = rollout_model.generate(context_tokens, **generation_kwargs)
     expected_len = context_tokens.size(1) + total_new
-    if generated.size(1) != expected_len:
-        raise RuntimeError(
-            f"Rollout returned length {generated.size(1)}, expected {expected_len}."
-        )
+    assert generated.size(1) == expected_len, f"rollout length mismatch: expected={expected_len} got={generated.size(1)}"
 
     produced = generated[:, context_tokens.size(1) :]
     hat_y = produced[:, :prefix_len]
     z_tokens = produced[:, prefix_len:]
 
-    if hat_y.size(1) != prefix_len or z_tokens.size(1) != continuation_len:
-        raise RuntimeError(
-            f"Unexpected rollout split shapes hat_y={tuple(hat_y.shape)}, z={tuple(z_tokens.shape)}"
-        )
+    assert hat_y.size(1) == prefix_len and z_tokens.size(1) == continuation_len, (
+        f"rollout split mismatch: expected hat_y={prefix_len}, z={continuation_len}; got hat_y={hat_y.size(1)}, z={z_tokens.size(1)}"
+    )
 
     return hat_y, z_tokens
