@@ -148,3 +148,8 @@
 ## 2026-03-26-16:15 : FLA legacy cache detach must allow `None` leaves
 - `Cache.to_legacy_cache()` may include `None` entries for inactive state slots.
 - `_detach_tree` now treats `None` as a valid leaf (`None -> None`) before tensor/container recursion.
+
+## 2026-03-26-16:55 : Objective-aware packed length for dataloader
+- `opd_kl` no longer packs unused GT continuation tokens in streaming chunks.
+- `TrainConfig.sequence_length/sequence_plus_one` are now objective-aware directly (`opd_kl`: `context+prefix`; `baseline_ce`: `context+prefix+continuation`).
+- `opd/fineweb_data.py` packs by `sequence_*`; `opd/train_loop.py` uses OPD-specific split (`context + clean_prefix`) and objective-aware token throughput accounting.

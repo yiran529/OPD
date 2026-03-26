@@ -68,6 +68,8 @@ class TrainConfig:
 
     @property
     def sequence_length(self) -> int:
+        if self.objective == "opd_kl":
+            return self.context_len + self.prefix_len
         return self.context_len + self.prefix_len + self.continuation_len
 
     @property

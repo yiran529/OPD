@@ -45,7 +45,7 @@ def _autocast_context(cfg: TrainConfig, device: torch.device):
     return nullcontext()
 
 
-def _split_batch_segments(batch_tokens: torch.Tensor, cfg: TrainConfig) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def _split_opd_batch_segments(batch_tokens: torch.Tensor, cfg: TrainConfig) -> Tuple[torch.Tensor, torch.Tensor]:
     assert batch_tokens.dim() == 2, f"batch_tokens shape mismatch: expected rank=2 [batch,seq+1], got shape={tuple(batch_tokens.shape)}"
     assert batch_tokens.size(1) == cfg.sequence_plus_one, (
         f"sequence length mismatch: expected={cfg.sequence_plus_one} got={batch_tokens.size(1)}"
@@ -53,11 +53,7 @@ def _split_batch_segments(batch_tokens: torch.Tensor, cfg: TrainConfig) -> Tuple
 
     context = batch_tokens[:, : cfg.context_len]
     clean_prefix = batch_tokens[:, cfg.context_len : cfg.context_len + cfg.prefix_len]
-    continuation = batch_tokens[
-        :,
-        cfg.context_len + cfg.prefix_len : cfg.context_len + cfg.prefix_len + cfg.continuation_len,
-    ]
-    return context, clean_prefix, continuation
+    return context, clean_prefix
 
 
 def _build_optimizer(
@@ -90,7 +86,7 @@ def _compute_opd_loss(
     cfg: TrainConfig,
     pad_token_id: int,
 ) -> OpdLossBundle:
-    context, clean_prefix, _ = _split_batch_segments(batch_tokens, cfg)
+    context, clean_prefix = _split_opd_batch_segments(batch_tokens, cfg)
 
     with torch.no_grad():
         corrupted_prefix, z_tokens = generate_rollout_tokens(
