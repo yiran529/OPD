@@ -155,6 +155,6 @@
 - `opd/fineweb_data.py` packs by `sequence_*`; `opd/train_loop.py` uses OPD-specific split (`context + clean_prefix`) and objective-aware token throughput accounting.
 
 ## 2026-03-26-17:20 : Add small-sample sanity switches for overfit checks
-- Added `sanity_num_docs` (default `0`) and `sanity_disable_shuffle` (default `false`) in `TrainConfig`.
-- `opd/fineweb_data.py` now supports `stream.take(sanity_num_docs)` and skipping shuffle for deterministic small-data sanity runs.
+- Added `sanity_num_samples` (default `0`) and `sanity_disable_shuffle` (default `false`) in `TrainConfig`.
+- `opd/fineweb_data.py` now supports collecting a fixed number of packed samples and cycling them indefinitely, plus skipping shuffle for deterministic small-data sanity runs.
 - Defaults keep original training behavior unchanged.

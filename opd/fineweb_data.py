@@ -31,9 +31,6 @@ class FineWebPackedDataset(IterableDataset):
                 seed=self.cfg.seed,
             )
 
-        if self.cfg.sanity_num_docs > 0:
-            stream = stream.take(self.cfg.sanity_num_docs)
-
         if self.world_size > 1:
             stream = stream.shard(num_shards=self.world_size, index=self.rank)
 
@@ -43,6 +40,42 @@ class FineWebPackedDataset(IterableDataset):
 
         return stream
 
+    def _collect_sanity_samples(
+        self,
+        seq_plus_one: int,
+        seq_len: int,
+        eos_token_id: int,
+    ) -> List[torch.Tensor]:
+        token_buffer: List[int] = []
+        collected: List[torch.Tensor] = []
+
+        stream = self._build_stream()
+        text_field = self.cfg.dataset_text_field
+
+        for row in stream:
+            assert text_field in row, "missing dataset text field"
+            text = row[text_field]
+            assert isinstance(text, str), "dataset text must be str"
+            if not text:
+                continue
+
+            token_ids = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+            if not token_ids:
+                continue
+            token_ids.append(eos_token_id)
+            token_buffer.extend(token_ids)
+
+            while len(token_buffer) >= seq_plus_one:
+                chunk = token_buffer[:seq_plus_one]
+                collected.append(torch.tensor(chunk, dtype=torch.long))
+                token_buffer = token_buffer[seq_len:]
+                if len(collected) == self.cfg.sanity_num_samples:
+                    return collected
+
+        raise RuntimeError(
+            f"Failed to collect sanity_num_samples={self.cfg.sanity_num_samples} from dataset stream"
+        )
+
     def __iter__(self) -> Iterator[torch.Tensor]:
         eos_token_id = self.tokenizer.eos_token_id
         assert eos_token_id is not None, "tokenizer must provide eos_token_id"
@@ -50,6 +83,18 @@ class FineWebPackedDataset(IterableDataset):
         seq_plus_one = self.cfg.sequence_plus_one
         seq_len = self.cfg.sequence_length
         token_buffer: List[int] = []
+
+        if self.cfg.sanity_num_samples > 0:
+            sanity_samples = self._collect_sanity_samples(
+                seq_plus_one=seq_plus_one,
+                seq_len=seq_len,
+                eos_token_id=eos_token_id,
+            )
+            assert sanity_samples, "sanity sample collection returned empty"
+            sample_idx = 0
+            while True:
+                yield sanity_samples[sample_idx]
+                sample_idx = (sample_idx + 1) % len(sanity_samples)
 
         stream = self._build_stream()
         text_field = self.cfg.dataset_text_field
