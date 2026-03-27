@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import random
 import time
 from contextlib import nullcontext
@@ -18,7 +17,7 @@ from opd.config import TrainConfig
 from opd.distributed import DistEnv, barrier, reduce_mean
 from opd.fineweb_data import build_dataloader
 from opd.losses import OpdLossBundle
-from opd.rollout import generate_rollout_tokens, sync_rollout_model
+from opd.rollout import generate_dual_rollout_tokens
 from opd.state_alignment import compute_stepwise_opd_losses
 
 
@@ -81,30 +80,36 @@ def _compute_baseline_ce(model: torch.nn.Module, batch_tokens: torch.Tensor):
 
 def _compute_opd_loss(
     model: torch.nn.Module,
-    rollout_model: torch.nn.Module,
+    rollout_source_model: torch.nn.Module,
     batch_tokens: torch.Tensor,
     cfg: TrainConfig,
     pad_token_id: int,
 ) -> OpdLossBundle:
     context, clean_prefix = _split_opd_batch_segments(batch_tokens, cfg)
 
-    with torch.no_grad():
-        corrupted_prefix, z_tokens = generate_rollout_tokens(
-            rollout_model=rollout_model,
+    rollout_was_training = rollout_source_model.training
+    rollout_source_model.eval()
+    with torch.inference_mode():
+        corrupted_prefix, corrupted_z_tokens, clean_z_tokens = generate_dual_rollout_tokens(
+            model=rollout_source_model,
             context_tokens=context,
+            clean_prefix_tokens=clean_prefix,
             prefix_len=cfg.prefix_len,
             continuation_len=cfg.continuation_len,
             temperature=cfg.rollout_temperature,
             top_p=cfg.rollout_top_p,
             pad_token_id=pad_token_id,
         )
+    if rollout_was_training:
+        rollout_source_model.train()
 
     return compute_stepwise_opd_losses(
         model=model,
         context_tokens=context,
         corrupted_prefix_tokens=corrupted_prefix,
         clean_prefix_tokens=clean_prefix,
-        z_tokens=z_tokens,
+        corrupted_z_tokens=corrupted_z_tokens,
+        clean_z_tokens=clean_z_tokens,
         lambda_state=cfg.lambda_state,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,
@@ -140,11 +145,6 @@ def run_training(
         )
 
     raw_model = _unwrap_model(model)
-    rollout_model = None
-    if cfg.objective == "opd_kl":
-        rollout_model = copy.deepcopy(raw_model)
-        rollout_model.to(dist_env.device)
-        sync_rollout_model(rollout_model, raw_model)
 
     optimizer, trainable_params = _build_optimizer(model, cfg)
     total_params = 0
@@ -204,7 +204,6 @@ def run_training(
         global_step = load_checkpoint(
             checkpoint_path=cfg.resume_path,
             model=model,
-            rollout_model=rollout_model,
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
@@ -240,10 +239,9 @@ def run_training(
                     loss_kl = torch.zeros_like(loss_total)
                     loss_state = torch.zeros_like(loss_total)
                 else:
-                    assert rollout_model is not None, "rollout_model is required for opd_kl"
                     opd_loss = _compute_opd_loss(
                         model=model,
-                        rollout_model=rollout_model,
+                        rollout_source_model=raw_model,
                         batch_tokens=batch_tokens,
                         cfg=cfg,
                         pad_token_id=tokenizer.pad_token_id,
@@ -276,9 +274,6 @@ def run_training(
 
         scheduler.step()
         global_step += 1
-
-        if rollout_model is not None and global_step % cfg.rollout_sync_steps == 0:
-            sync_rollout_model(rollout_model, raw_model)
 
         should_log = global_step == 1 or global_step % cfg.log_interval == 0
         if should_log:
@@ -336,7 +331,6 @@ def run_training(
                     checkpoint_dir=checkpoint_dir,
                     step=global_step,
                     model=model,
-                    rollout_model=rollout_model,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     scaler=scaler,

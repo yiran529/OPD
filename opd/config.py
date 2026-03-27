@@ -54,7 +54,6 @@ class TrainConfig:
 
     rollout_temperature: float = 1.0
     rollout_top_p: float = 1.0
-    rollout_sync_steps: int = 50
 
     log_interval: int = 20
     save_interval: int = 500
@@ -95,8 +94,6 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("micro_batch_size and grad_accum_steps must be positive")
     if cfg.max_steps <= 0:
         raise ValueError("max_steps must be positive")
-    if cfg.rollout_sync_steps <= 0:
-        raise ValueError("rollout_sync_steps must be positive")
     if cfg.rollout_temperature < 0.0:
         raise ValueError("rollout_temperature must be >= 0")
     if not 0.0 < cfg.rollout_top_p <= 1.0:

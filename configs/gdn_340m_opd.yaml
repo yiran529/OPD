@@ -43,7 +43,6 @@ state_time_stride: 4
 
 rollout_temperature: 1.0
 rollout_top_p: 1.0
-rollout_sync_steps: 5
 
 log_interval: 1
 save_interval: 50

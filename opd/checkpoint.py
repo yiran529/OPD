@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import torch
@@ -20,7 +19,6 @@ def save_checkpoint(
     checkpoint_dir: Path,
     step: int,
     model: torch.nn.Module,
-    rollout_model: Optional[torch.nn.Module],
     optimizer: torch.optim.Optimizer,
     scheduler,
     scaler,
@@ -36,7 +34,6 @@ def save_checkpoint(
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict() if scheduler is not None else None,
         "scaler": scaler.state_dict() if scaler is not None else None,
-        "rollout_model": rollout_model.state_dict() if rollout_model is not None else None,
         "config": config_dict,
         "rng_python": random.getstate(),
         "rng_numpy": np.random.get_state(),
@@ -58,7 +55,6 @@ def save_checkpoint(
 def load_checkpoint(
     checkpoint_path: str,
     model: torch.nn.Module,
-    rollout_model: Optional[torch.nn.Module],
     optimizer: torch.optim.Optimizer,
     scheduler,
     scaler,
@@ -68,9 +64,6 @@ def load_checkpoint(
     state = torch.load(checkpoint_path, map_location="cpu")
 
     raw_model.load_state_dict(state["model"], strict=True)
-
-    if rollout_model is not None and state.get("rollout_model") is not None:
-        rollout_model.load_state_dict(state["rollout_model"], strict=True)
 
     optimizer.load_state_dict(state["optimizer"])
     for param_state in optimizer.state.values():
@@ -94,7 +87,5 @@ def load_checkpoint(
         torch.cuda.set_rng_state_all(state["rng_torch_cuda"])
 
     raw_model.to(device)
-    if rollout_model is not None:
-        rollout_model.to(device)
 
     return int(state["step"])
