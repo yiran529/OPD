@@ -158,3 +158,7 @@
 - Added `sanity_num_samples` (default `0`) and `sanity_disable_shuffle` (default `false`) in `TrainConfig`.
 - `opd/fineweb_data.py` now supports collecting a fixed number of packed samples and cycling them indefinitely, plus skipping shuffle for deterministic small-data sanity runs.
 - Defaults keep original training behavior unchanged.
+
+## 2026-03-27-12:00 : Problem/TODO
+- [] 显存占用大，且计算慢
+- [] 只需要state对齐子空间，或者SVD之类的？gram矩阵？

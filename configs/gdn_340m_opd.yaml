@@ -22,12 +22,12 @@ sanity_num_samples: 0
 sanity_disable_shuffle: false
 
 objective: opd_kl
-context_len: 512
-prefix_len: 128
+context_len: 768
+prefix_len: 256
 continuation_len: 256
 
-micro_batch_size: 8
-grad_accum_steps: 4
+micro_batch_size: 4
+grad_accum_steps: 8
 max_steps: 20000
 learning_rate: 1.0e-5
 weight_decay: 0.1
@@ -39,14 +39,14 @@ max_grad_norm: 1.0
 
 lambda_state: 0.1
 state_key: recurrent_state
-state_time_stride: 1
+state_time_stride: 4
 
 rollout_temperature: 1.0
 rollout_top_p: 1.0
-rollout_sync_steps: 50
+rollout_sync_steps: 5
 
-log_interval: 5
-save_interval: 500
+log_interval: 1
+save_interval: 50
 keep_last_k_checkpoints: 2
 wandb_enabled: true
 wandb_project: opd
