@@ -131,7 +131,13 @@ def run_training(
 
     model.to(dist_env.device)
     if dist_env.is_distributed:
-        model = DDP(model, device_ids=[dist_env.local_rank], broadcast_buffers=False)
+        ddp_find_unused_parameters = cfg.objective == "opd_kl"
+        model = DDP(
+            model,
+            device_ids=[dist_env.local_rank],
+            broadcast_buffers=False,
+            find_unused_parameters=ddp_find_unused_parameters,
+        )
 
     raw_model = _unwrap_model(model)
     rollout_model = None
