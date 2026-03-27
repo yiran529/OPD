@@ -6,7 +6,7 @@ from typing import Iterable, List
 import torch
 import torch.nn.functional as F
 
-from opd.losses import OpdLossBundle, kl_from_logits
+from opd.losses import OpdLossBundle, time_weighted_kl_from_logits
 
 
 def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
@@ -222,9 +222,11 @@ def compute_stepwise_opd_losses(
     for t in range(continuation_len):
         # KL at continuation step t (supervise current token z_t):
         #   L_KL(t) = KL( p_theta(. | x, y_hat, hat_z_{<t}) || sg(p_theta(. | x, y, z_{<t})) )
-        kl_term = kl_from_logits(
+        kl_term = time_weighted_kl_from_logits(
             student_logits=corr_prev_logits,
             teacher_logits=clean_prev_logits,
+            time_step=t,
+            total_steps=continuation_len,
         )
         kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
 
