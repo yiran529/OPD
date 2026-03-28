@@ -191,3 +191,8 @@
 ## 2026-03-28-10:05 : PyTorch 2.6 eval checkpoint loading compatibility
 - In `eval/checkpoint_loader.py`, `torch.load` now explicitly sets `weights_only=False`.
 - Reason: PyTorch 2.6 changed `torch.load` default to `weights_only=True`, which breaks loading our full training checkpoints containing non-tensor RNG states.
+
+## 2026-03-28-10:30 : Inference placed under eval with reusable runtime
+- Text inference is implemented under `eval/` (not a separate top-level package) to reuse existing model/checkpoint/output helpers.
+- Shared logic remains flat under `eval/`; format-specific input handling is isolated in `eval/readers/*`.
+- Current supported `input_format` is `txt`; future formats (e.g., parquet) should be added by registering new readers only.

@@ -19,12 +19,22 @@ def resolve_device() -> torch.device:
 def build_eval_model_and_tokenizer(
     eval_cfg: EvalConfig,
 ) -> Tuple[torch.nn.Module, object, TrainConfig, int, torch.device]:
-    train_cfg = load_config(eval_cfg.train_config_path)
+    return build_model_and_tokenizer_from_paths(
+        train_config_path=eval_cfg.train_config_path,
+        checkpoint_path=eval_cfg.checkpoint_path,
+    )
+
+
+def build_model_and_tokenizer_from_paths(
+    train_config_path: str,
+    checkpoint_path: str,
+) -> Tuple[torch.nn.Module, object, TrainConfig, int, torch.device]:
+    train_cfg = load_config(train_config_path)
     device = resolve_device()
 
     model, tokenizer = build_model_and_tokenizer(cfg=train_cfg, device=device)
     loaded_step = load_model_checkpoint(
-        checkpoint_path=eval_cfg.checkpoint_path,
+        checkpoint_path=checkpoint_path,
         model=model,
         device=device,
     )

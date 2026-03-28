@@ -59,7 +59,7 @@ configs/eval/arc_ai2.yaml
 Run eval:
 
 ```bash
-python3 eval/run_eval.py --config configs/eval/arc_ai2.yaml
+python3 -m eval.run_eval --config configs/eval/arc_ai2.yaml
 ```
 
 or
@@ -77,3 +77,25 @@ python3 scripts/download_arc_ai2.py --config ARC-Challenge --output_dir data/arc
 Then set in eval config:
 - `local_dataset_path: data/arc/ai2_arc/ARC-Challenge`
 - keep `dataset_split` as `train|validation|test`
+
+## Text inference
+
+Default infer config:
+
+```bash
+configs/eval/infer_text.yaml
+```
+
+Run infer:
+
+```bash
+python3 -m eval.run_infer --config configs/eval/infer_text.yaml
+```
+
+or
+
+```bash
+./scripts/run_infer_text.sh configs/eval/infer_text.yaml
+```
+
+Input format currently supports `txt` (one line per sample after optional strip/filter).

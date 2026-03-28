@@ -7,6 +7,7 @@
 ## Configs
 - `configs/gdn_340m_opd.yaml`: default config for `m-a-p/340M-20B-GatedDeltaNet-pure-baseline` on FineWeb-Edu (now with `finetune_mode: lora`).
 - `configs/eval/arc_ai2.yaml`: ARC(AI2) downstream evaluation config (task/checkpoint/dataset/output).
+- `configs/eval/infer_text.yaml`: text inference config (checkpoint/input/generation/output).
 
 ## Core Package (`opd/`)
 - `opd/config.py`: `TrainConfig` dataclass, yaml loading, fail-fast config validation.
@@ -23,14 +24,18 @@
 - `scripts/run_1gpu.sh`: single-GPU convenience runner.
 - `scripts/run_ngpu.sh`: multi-GPU training runner.
 - `scripts/run_eval_arc.sh`: ARC(AI2) eval convenience runner.
+- `scripts/run_infer_text.sh`: text inference convenience runner.
 - `scripts/download_arc_ai2.py`: download/save AI2 ARC (`ARC-Easy`/`ARC-Challenge`) to local disk for offline eval.
 
 ## Eval Package (`eval/`)
 - `eval/run_eval.py`: unified eval entrypoint (currently routes `task=arc_ai2`).
+- `eval/run_infer.py`: text inference entrypoint (currently routes `input_format=txt`).
 - `eval/config.py`: `EvalConfig` dataclass, eval yaml loading, fail-fast validation.
+- `eval/infer_config.py`: `InferConfig` dataclass, infer yaml loading, fail-fast validation.
 - `eval/model_runtime.py`: builds model/tokenizer from train config and loads model checkpoint for eval.
 - `eval/checkpoint_loader.py`: checkpoint-only model state restore for eval (`strict=True`).
 - `eval/io.py`: eval output dir layout + json/jsonl writers.
+- `eval/readers/text_reader.py`: inference input reader entry (currently `txt` only).
 - `eval/tasks/arc_ai2/dataset.py`: AI2 ARC dataset loader (HF online or local `load_from_disk`) and normalized sample iterator.
 - `eval/tasks/arc_ai2/prompt.py`: ARC question-to-prompt formatting and answer suffix construction.
 - `eval/tasks/arc_ai2/scorer.py`: per-choice conditional logprob scoring from LM logits.

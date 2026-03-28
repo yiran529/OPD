@@ -1,0 +1,16 @@
+train_config_path: configs/gdn_340m_opd.yaml
+checkpoint_path: outputs/gdn340m-fineweb-opd/checkpoints/step_00000050.pt
+
+input_path: data/infer/input.txt
+input_format: txt
+max_samples: 0
+strip_lines: true
+skip_empty_lines: true
+
+max_new_tokens: 128
+temperature: 0.0
+top_p: 1.0
+
+output_dir: outputs
+run_name: null
+infer_name: infer_text
