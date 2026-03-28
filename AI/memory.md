@@ -187,3 +187,7 @@
 - Eval shared utilities are flattened directly under `eval/` (no `eval/common/`) to keep code explicit and small.
 - Task-specific logic lives under `eval/tasks/<task_name>/` (first task: `arc_ai2`) to isolate dataset/prompt/scoring differences.
 - Eval outputs are standardized at `outputs/<run_name>/eval/<task>/<checkpoint_tag>/`.
+
+## 2026-03-28-10:05 : PyTorch 2.6 eval checkpoint loading compatibility
+- In `eval/checkpoint_loader.py`, `torch.load` now explicitly sets `weights_only=False`.
+- Reason: PyTorch 2.6 changed `torch.load` default to `weights_only=True`, which breaks loading our full training checkpoints containing non-tensor RNG states.

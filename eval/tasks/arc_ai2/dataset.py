@@ -31,33 +31,60 @@ def load_arc_dataset(cfg: EvalConfig) -> Dataset:
     )
 
 
-def iter_arc_examples(cfg: EvalConfig) -> Iterable[dict]:
-    dataset = load_arc_dataset(cfg)
-    count = 0
-    for row in dataset:
-        question = row.get("question", {})
-        choices = question.get("choices", [])
-        stem = question.get("stem", "")
-        answer_key = row.get("answerKey", "")
+def _normalize_arc_row(row: dict) -> dict:
+    question_field = row.get("question", "")
+    answer_key = row.get("answerKey", "")
 
-        assert isinstance(stem, str) and stem, "ARC question.stem must be non-empty str"
-        assert isinstance(choices, list) and choices, "ARC question.choices must be non-empty list"
-        assert isinstance(answer_key, str) and answer_key, "ARC answerKey must be non-empty str"
+    # ---- resolve question stem ----
+    if isinstance(question_field, dict):
+        stem = question_field.get("stem", "")
+        raw_choices = question_field.get("choices", row.get("choices", []))
+    else:
+        stem = question_field
+        raw_choices = row.get("choices", [])
 
-        normalized_choices = []
-        for choice in choices:
+    assert isinstance(stem, str) and stem, "ARC question must be non-empty str"
+    assert isinstance(answer_key, str) and answer_key, "ARC answerKey must be non-empty str"
+
+    # ---- resolve choices into list[{label,text}] ----
+    normalized_choices: list[dict] = []
+    if isinstance(raw_choices, list):
+        for choice in raw_choices:
+            assert isinstance(choice, dict), "ARC choice must be dict"
             label = choice.get("label", "")
             text = choice.get("text", "")
             assert isinstance(label, str) and label, "ARC choice.label must be non-empty str"
             assert isinstance(text, str) and text, "ARC choice.text must be non-empty str"
             normalized_choices.append({"label": label, "text": text})
+    elif isinstance(raw_choices, dict):
+        labels = raw_choices.get("label", [])
+        texts = raw_choices.get("text", [])
+        assert isinstance(labels, list) and isinstance(texts, list), (
+            "ARC choices dict must contain list fields: label/text"
+        )
+        assert len(labels) == len(texts) and len(labels) > 0, (
+            "ARC choices label/text length mismatch or empty"
+        )
+        for label, text in zip(labels, texts):
+            assert isinstance(label, str) and label, "ARC choice.label must be non-empty str"
+            assert isinstance(text, str) and text, "ARC choice.text must be non-empty str"
+            normalized_choices.append({"label": label, "text": text})
+    else:
+        raise TypeError(f"Unsupported ARC choices type: {type(raw_choices)}")
 
-        yield {
-            "id": row.get("id", ""),
-            "question": stem,
-            "choices": normalized_choices,
-            "answer_key": answer_key,
-        }
+    return {
+        "id": row.get("id", ""),
+        "question": stem,
+        "choices": normalized_choices,
+        "answer_key": answer_key,
+    }
+
+
+def iter_arc_examples(cfg: EvalConfig) -> Iterable[dict]:
+    dataset = load_arc_dataset(cfg)
+    count = 0
+    for row in dataset:
+        yield _normalize_arc_row(row)
 
         count += 1
         if cfg.max_samples > 0 and count >= cfg.max_samples:

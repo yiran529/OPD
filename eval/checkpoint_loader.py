@@ -18,7 +18,7 @@ def load_model_checkpoint(
     if not checkpoint_file.exists():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_file}")
 
-    state = torch.load(str(checkpoint_file), map_location="cpu")
+    state = torch.load(str(checkpoint_file), map_location="cpu", weights_only=False)
     if "model" not in state:
         raise KeyError("Checkpoint missing required key: model")
 
