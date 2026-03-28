@@ -262,6 +262,7 @@ def build_model_and_tokenizer(cfg: TrainConfig, device: torch.device) -> Tuple[t
         trust_remote_code=cfg.trust_remote_code,
         use_fast=True,
     )
+    tokenizer.padding_side = "left"
     if tokenizer.eos_token_id is None:
         raise ValueError("Tokenizer must define eos_token_id")
     if tokenizer.pad_token_id is None:

@@ -126,7 +126,7 @@ def _state_alignment_loss_from_caches(
     # State alignment at continuation step t:
     #   L_state(t) = w_t * mean_{layers,tensors} [ (1 - cos(a_t, b_t)) + 0.01 * (||a_t|| - ||b_t||)^2 ]
     # where a_t is corrupted-path state and b_t is clean-path state (stop-grad), and w_t = ((t+1)/T)^2 with t=time_step, T=total_steps.
-    time_weight = ((time_step + 1) / total_steps) ** 2
+    time_weight = ((time_step + 1) / total_steps)
     align_terms: List[torch.Tensor] = []
 
     for layer_idx in range(len(corrupted_cache)):

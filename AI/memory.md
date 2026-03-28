@@ -173,3 +173,12 @@
 - `compute_stepwise_opd_losses` now consumes two continuation token streams (`hat_z`, `z`) instead of a shared continuation.
 - Checkpoint payload removed `rollout_model`; only model/optimizer/scheduler/scaler/RNG are persisted.
 - Removed stale config knob `rollout_sync_steps` to avoid configuration illusion.
+
+## 2026-03-28-00:20 : Time-weighting schedule softened + decoder-only generate masking fix
+- Time weighting in both KL and state alignment was changed from quadratic to linear:
+  - from `w_t=((t+1)/T)^2`
+  - to `w_t=((t+1)/T)`
+- For decoder-only rollout stability/warning mitigation:
+  - tokenizer now sets `padding_side="left"` in `opd/model_loader.py`.
+  - `model.generate(...)` in `opd/rollout.py` now passes explicit all-ones `attention_mask` for both corrupted and clean prompts.
+- This makes generation no longer depend on implicit padding inference when `pad_token_id` may equal `eos_token_id`.

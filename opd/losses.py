@@ -24,7 +24,7 @@ def time_weighted_kl_from_logits(
     )
     assert 0 <= time_step < total_steps, "time_step out of range"
 
-    time_weight = ((time_step + 1) / total_steps) ** 2
+    time_weight = ((time_step + 1) / total_steps)
     student_log_probs = F.log_softmax(student_logits, dim=-1)
     teacher_probs = F.softmax(teacher_logits.detach(), dim=-1)
     kl_term = F.kl_div(student_log_probs, teacher_probs, reduction="none").sum(dim=-1).mean()

@@ -65,7 +65,12 @@ def generate_dual_rollout_tokens(
         top_p=top_p,
         pad_token_id=pad_token_id,
     )
-    corrupted_generated = model.generate(context_tokens, **corrupted_kwargs)
+    corrupted_attention_mask = torch.ones_like(context_tokens)
+    corrupted_generated = model.generate(
+        context_tokens,
+        attention_mask=corrupted_attention_mask,
+        **corrupted_kwargs,
+    )
     expected_corrupted_len = context_tokens.size(1) + total_new
     assert corrupted_generated.size(1) == expected_corrupted_len, (
         f"corrupted rollout length mismatch: expected={expected_corrupted_len} got={corrupted_generated.size(1)}"
@@ -87,7 +92,12 @@ def generate_dual_rollout_tokens(
         top_p=top_p,
         pad_token_id=pad_token_id,
     )
-    clean_generated = model.generate(clean_prompt, **clean_kwargs)
+    clean_attention_mask = torch.ones_like(clean_prompt)
+    clean_generated = model.generate(
+        clean_prompt,
+        attention_mask=clean_attention_mask,
+        **clean_kwargs,
+    )
     expected_clean_len = clean_prompt.size(1) + continuation_len
     assert clean_generated.size(1) == expected_clean_len, (
         f"clean rollout length mismatch: expected={expected_clean_len} got={clean_generated.size(1)}"
