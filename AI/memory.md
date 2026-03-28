@@ -182,3 +182,8 @@
   - tokenizer now sets `padding_side="left"` in `opd/model_loader.py`.
   - `model.generate(...)` in `opd/rollout.py` now passes explicit all-ones `attention_mask` for both corrupted and clean prompts.
 - This makes generation no longer depend on implicit padding inference when `pad_token_id` may equal `eos_token_id`.
+
+## 2026-03-28-09:30 : Eval layout flattening + task-local organization
+- Eval shared utilities are flattened directly under `eval/` (no `eval/common/`) to keep code explicit and small.
+- Task-specific logic lives under `eval/tasks/<task_name>/` (first task: `arc_ai2`) to isolate dataset/prompt/scoring differences.
+- Eval outputs are standardized at `outputs/<run_name>/eval/<task>/<checkpoint_tag>/`.

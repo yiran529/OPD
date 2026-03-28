@@ -47,3 +47,33 @@ LoRA config keys:
 For `opd_kl`, state alignment is cache-based (memory state from `past_key_values`) with:
 - `state_key` (default `recurrent_state`)
 - `state_time_stride` (compute state alignment loss every N continuation steps)
+
+## ARC eval (AI2 ARC)
+
+Default eval config:
+
+```bash
+configs/eval/arc_ai2.yaml
+```
+
+Run eval:
+
+```bash
+python3 eval/run_eval.py --config configs/eval/arc_ai2.yaml
+```
+
+or
+
+```bash
+./scripts/run_eval_arc.sh configs/eval/arc_ai2.yaml
+```
+
+Download ARC to local disk (optional, for offline eval):
+
+```bash
+python3 scripts/download_arc_ai2.py --config ARC-Challenge --output_dir data/arc/ai2_arc/ARC-Challenge
+```
+
+Then set in eval config:
+- `local_dataset_path: data/arc/ai2_arc/ARC-Challenge`
+- keep `dataset_split` as `train|validation|test`
