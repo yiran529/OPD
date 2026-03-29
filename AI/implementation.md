@@ -19,10 +19,10 @@
 - Data:
   - `opd/fineweb_data.py` streams FineWeb-Edu, shards by rank, tokenizes, and packs fixed-length chunks.
 - Rollout:
-  - `opd/rollout.py` builds entropy-ranked Top-K corrupted prefix `y_tilde` from clean prefix `y` and rolls out a single student continuation `hat_z` from `x + y_tilde`.
+  - `opd/rollout.py` builds entropy-ranked Top-K corrupted prefix `y_tilde` from clean prefix `y`.
 - Losses:
   - `opd/losses.py` contains OPD loss bundle + time-weighted JSD primitive.
-  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean) and computes JSD + state alignment loss in one serial pass under shared continuation tokens.
+  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean), online-samples student continuation tokens from corrupted logits, and computes JSD + state alignment in one serial pass.
 - Training loop:
   - `opd/train_loop.py` supports:
     - `baseline_ce` (plain CE finetune),
@@ -35,7 +35,7 @@
 - `x` = context segment from packed sequence.
 - `y` = clean prefix segment from ground-truth sequence.
 - `y_tilde` = entropy-ranked Top-K local corruption of `y` where selected positions are replaced by model argmax predictions under clean teacher forcing.
-- `hat_z` = student continuation generated from current model under `x + y_tilde`.
+- `hat_z` = student continuation sampled online from corrupted-branch logits during stepwise decoding.
 - Two forward paths share the same continuation history:
   - corrupted path cache initialized by `x + y_tilde`, then decoded with `hat_z`.
   - clean path cache initialized by `x + y`, then decoded with the same `hat_z` (teacher, stop-grad).

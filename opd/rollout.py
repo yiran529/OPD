@@ -4,35 +4,6 @@ import torch
 import torch.nn.functional as F
 
 
-def _build_generation_kwargs(
-    *,
-    max_new_tokens: int,
-    temperature: float,
-    top_p: float,
-    pad_token_id: int,
-) -> dict:
-    assert max_new_tokens > 0, "max_new_tokens must be positive"
-    assert pad_token_id is not None, "pad_token_id is required"
-
-    do_sample = temperature > 0.0
-    generation_kwargs = {
-        "max_new_tokens": max_new_tokens,
-        "min_new_tokens": max_new_tokens,
-        "use_cache": True,
-        "pad_token_id": pad_token_id,
-        # Force fixed-length decoding; no early stop by eos.
-        "eos_token_id": None,
-    }
-
-    if do_sample:
-        generation_kwargs["do_sample"] = True
-        generation_kwargs["temperature"] = temperature
-        generation_kwargs["top_p"] = top_p
-    else:
-        generation_kwargs["do_sample"] = False
-    return generation_kwargs
-
-
 @torch.no_grad()
 def build_entropy_corrupted_prefix(
     model: torch.nn.Module,
@@ -97,45 +68,3 @@ def build_entropy_corrupted_prefix(
     corrupted_prefix = clean_prefix_tokens.clone()
     corrupted_prefix[replace_mask] = predicted_tokens[replace_mask]
     return corrupted_prefix
-
-
-@torch.no_grad()
-def generate_student_rollout_tokens(
-    model: torch.nn.Module,
-    context_tokens: torch.Tensor,
-    corrupted_prefix_tokens: torch.Tensor,
-    continuation_len: int,
-    temperature: float,
-    top_p: float,
-    pad_token_id: int,
-) -> torch.Tensor:
-    assert context_tokens.dim() == 2, f"context_tokens shape mismatch: expected rank=2, got shape={tuple(context_tokens.shape)}"
-    assert corrupted_prefix_tokens.dim() == 2, (
-        f"corrupted_prefix_tokens shape mismatch: expected rank=2, got shape={tuple(corrupted_prefix_tokens.shape)}"
-    )
-    assert context_tokens.size(0) == corrupted_prefix_tokens.size(0), "batch size mismatch between context and corrupted_prefix"
-    assert continuation_len > 0, "continuation_len must be positive"
-
-    prompt = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
-    generation_kwargs = _build_generation_kwargs(
-        max_new_tokens=continuation_len,
-        temperature=temperature,
-        top_p=top_p,
-        pad_token_id=pad_token_id,
-    )
-
-    attention_mask = torch.ones_like(prompt)
-    generated = model.generate(
-        prompt,
-        attention_mask=attention_mask,
-        **generation_kwargs,
-    )
-    expected_len = prompt.size(1) + continuation_len
-    assert generated.size(1) == expected_len, (
-        f"student rollout length mismatch: expected={expected_len} got={generated.size(1)}"
-    )
-    student_z_tokens = generated[:, prompt.size(1) :]
-    assert student_z_tokens.size(1) == continuation_len, (
-        f"student rollout split mismatch: expected={continuation_len}, got={student_z_tokens.size(1)}"
-    )
-    return student_z_tokens

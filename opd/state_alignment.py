@@ -112,6 +112,37 @@ def _decode_one_token(
     return logits[:, 0, :], next_past_key_values
 
 
+def _sample_next_token(
+    logits: torch.Tensor,
+    temperature: float,
+    top_p: float,
+) -> torch.Tensor:
+    assert logits.dim() == 2, f"logits shape mismatch: expected [batch,vocab], got shape={tuple(logits.shape)}"
+    assert temperature >= 0.0, f"temperature must be >= 0, got {temperature}"
+    assert 0.0 < top_p <= 1.0, f"top_p must be in (0,1], got {top_p}"
+
+    if temperature == 0.0:
+        return logits.argmax(dim=-1, keepdim=True)
+
+    probs = F.softmax((logits.float() / temperature), dim=-1)
+    if top_p < 1.0:
+        sorted_probs, sorted_indices = torch.sort(probs, dim=-1, descending=True)
+        cumsum_probs = torch.cumsum(sorted_probs, dim=-1)
+        sorted_remove_mask = cumsum_probs > top_p
+        sorted_remove_mask[:, 0] = False
+        sorted_probs = sorted_probs.masked_fill(sorted_remove_mask, 0.0)
+
+        denom = sorted_probs.sum(dim=-1, keepdim=True)
+        assert torch.all(denom > 0), "top-p filtering produced zero probability mass"
+        sorted_probs = sorted_probs / denom
+
+        sampled_sorted_idx = torch.multinomial(sorted_probs, num_samples=1)
+        sampled_token = torch.gather(sorted_indices, dim=-1, index=sampled_sorted_idx)
+        return sampled_token
+
+    return torch.multinomial(probs, num_samples=1)
+
+
 def _state_alignment_loss_from_caches(
     corrupted_cache,
     clean_cache,
@@ -161,7 +192,9 @@ def compute_stepwise_opd_losses(
     context_tokens: torch.Tensor,
     corrupted_prefix_tokens: torch.Tensor,
     clean_prefix_tokens: torch.Tensor,
-    student_z_tokens: torch.Tensor,
+    continuation_len: int,
+    rollout_temperature: float,
+    rollout_top_p: float,
     lambda_state: float,
     state_key: str,
     state_time_stride: int,
@@ -173,14 +206,10 @@ def compute_stepwise_opd_losses(
     assert clean_prefix_tokens.dim() == 2, (
         f"clean_prefix_tokens shape mismatch: expected rank=2, got shape={tuple(clean_prefix_tokens.shape)}"
     )
-    assert student_z_tokens.dim() == 2, (
-        f"student_z_tokens shape mismatch: expected rank=2, got shape={tuple(student_z_tokens.shape)}"
-    )
-    assert context_tokens.size(0) == student_z_tokens.size(0), "batch size mismatch for student_z_tokens"
+    assert continuation_len > 0, "continuation_len must be positive"
+    assert rollout_temperature >= 0.0, "rollout_temperature must be >= 0"
+    assert 0.0 < rollout_top_p <= 1.0, "rollout_top_p must be in (0, 1]"
     assert state_time_stride > 0, "state_time_stride must be positive"
-
-    continuation_len = student_z_tokens.size(1)
-    assert continuation_len > 0, "student_z_tokens must be non-empty"
 
     corrupted_prefix = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
     clean_prefix = torch.cat([context_tokens, clean_prefix_tokens], dim=1)
@@ -222,7 +251,12 @@ def compute_stepwise_opd_losses(
         )
         kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
 
-        token_t = student_z_tokens[:, t : t + 1]
+        with torch.no_grad():
+            token_t = _sample_next_token(
+                logits=corr_prev_logits.detach(),
+                temperature=rollout_temperature,
+                top_p=rollout_top_p,
+            )
 
         if model_was_training:
             model.train()

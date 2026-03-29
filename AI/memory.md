@@ -212,3 +212,9 @@
   - `prefix_corrupt_topk_ratio` (default `0.25`)
   - `prefix_corrupt_topk_max` (default `64`)
 - State alignment stays linear time-weighted with `cos + 0.1 * norm` as current default experiment choice.
+
+## 2026-03-29-15:30 : Merge student rollout into stepwise loss decode loop
+- Removed the separate pre-rollout pass that generated full `student_z_tokens` before loss computation.
+- `compute_stepwise_opd_losses` now samples student tokens online from corrupted-branch logits at each step (`rollout_temperature` / `rollout_top_p`) and immediately decodes both branches with that token.
+- This keeps the same shared-history training semantics while reducing duplicated decode work (one continuation pass instead of rollout pass + loss pass).
+- Deleted unused rollout helper `generate_student_rollout_tokens` from `opd/rollout.py`.

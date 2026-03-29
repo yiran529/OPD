@@ -17,7 +17,7 @@ from opd.config import TrainConfig
 from opd.distributed import DistEnv, barrier, reduce_mean
 from opd.fineweb_data import build_dataloader
 from opd.losses import OpdLossBundle
-from opd.rollout import build_entropy_corrupted_prefix, generate_student_rollout_tokens
+from opd.rollout import build_entropy_corrupted_prefix
 from opd.state_alignment import compute_stepwise_opd_losses
 
 
@@ -83,7 +83,6 @@ def _compute_opd_loss(
     rollout_source_model: torch.nn.Module,
     batch_tokens: torch.Tensor,
     cfg: TrainConfig,
-    pad_token_id: int,
 ) -> OpdLossBundle:
     context, clean_prefix = _split_opd_batch_segments(batch_tokens, cfg)
 
@@ -97,15 +96,6 @@ def _compute_opd_loss(
             topk_ratio=cfg.prefix_corrupt_topk_ratio,
             topk_max=cfg.prefix_corrupt_topk_max,
         )
-        student_z_tokens = generate_student_rollout_tokens(
-            model=rollout_source_model,
-            context_tokens=context,
-            corrupted_prefix_tokens=corrupted_prefix,
-            continuation_len=cfg.continuation_len,
-            temperature=cfg.rollout_temperature,
-            top_p=cfg.rollout_top_p,
-            pad_token_id=pad_token_id,
-        )
     if rollout_was_training:
         rollout_source_model.train()
 
@@ -114,7 +104,9 @@ def _compute_opd_loss(
         context_tokens=context,
         corrupted_prefix_tokens=corrupted_prefix,
         clean_prefix_tokens=clean_prefix,
-        student_z_tokens=student_z_tokens,
+        continuation_len=cfg.continuation_len,
+        rollout_temperature=cfg.rollout_temperature,
+        rollout_top_p=cfg.rollout_top_p,
         lambda_state=cfg.lambda_state,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,
@@ -249,7 +241,6 @@ def run_training(
                         rollout_source_model=raw_model,
                         batch_tokens=batch_tokens,
                         cfg=cfg,
-                        pad_token_id=tokenizer.pad_token_id,
                     )
                     loss_total = opd_loss.total
                     loss_kl = opd_loss.kl
