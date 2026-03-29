@@ -54,6 +54,8 @@ class TrainConfig:
 
     rollout_temperature: float = 1.0
     rollout_top_p: float = 1.0
+    prefix_corrupt_topk_ratio: float = 0.25
+    prefix_corrupt_topk_max: int = 64
 
     log_interval: int = 20
     save_interval: int = 500
@@ -98,6 +100,15 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("rollout_temperature must be >= 0")
     if not 0.0 < cfg.rollout_top_p <= 1.0:
         raise ValueError("rollout_top_p must be in (0, 1]")
+    if not 0.0 < cfg.prefix_corrupt_topk_ratio <= 1.0:
+        raise ValueError("prefix_corrupt_topk_ratio must be in (0, 1]")
+    if cfg.prefix_corrupt_topk_max <= 0:
+        raise ValueError("prefix_corrupt_topk_max must be positive")
+    if int(cfg.prefix_corrupt_topk_ratio * cfg.prefix_len) <= 0:
+        raise ValueError(
+            "prefix_corrupt_topk_ratio * prefix_len must be >= 1 "
+            f"(ratio={cfg.prefix_corrupt_topk_ratio}, prefix_len={cfg.prefix_len})"
+        )
     if not cfg.state_key:
         raise ValueError("state_key must be a non-empty string")
     if cfg.state_time_stride <= 0:

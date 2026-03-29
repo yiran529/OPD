@@ -19,16 +19,14 @@
 - Data:
   - `opd/fineweb_data.py` streams FineWeb-Edu, shards by rank, tokenizes, and packs fixed-length chunks.
 - Rollout:
-  - `opd/rollout.py` uses the current model to generate dual trajectories:
-    - corrupted path: `hat_y, hat_z` from `x`,
-    - clean path: `z` from `x + y`.
+  - `opd/rollout.py` builds entropy-ranked Top-K corrupted prefix `y_tilde` from clean prefix `y` and rolls out a single student continuation `hat_z` from `x + y_tilde`.
 - Losses:
-  - `opd/losses.py` contains OPD loss bundle + KL primitive.
-  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean) and computes KL + state alignment loss in one serial pass.
+  - `opd/losses.py` contains OPD loss bundle + time-weighted JSD primitive.
+  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean) and computes JSD + state alignment loss in one serial pass under shared continuation tokens.
 - Training loop:
   - `opd/train_loop.py` supports:
     - `baseline_ce` (plain CE finetune),
-    - `opd_kl` (dual-rollout KL + state alignment),
+    - `opd_kl` (entropy-corruption JSD + state alignment),
     - gradient accumulation, AMP autocast, grad clipping, logging, and checkpoint save.
 - Checkpointing:
   - `opd/checkpoint.py` saves/loads model, optimizer, scheduler, scaler, and RNG states.
@@ -36,17 +34,16 @@
 ## Objective mapping to idea
 - `x` = context segment from packed sequence.
 - `y` = clean prefix segment from ground-truth sequence.
-- `hat_y` = corrupted-path rollout prefix generated from current model.
-- `hat_z` = corrupted-path continuation generated from current model under `x + hat_y`.
-- `z` = clean-path continuation generated from current model under `x + y`.
-- Two forward paths are decoded on separate continuations:
-  - corrupted path cache initialized by `x + hat_y`, then decoded with `hat_z`.
-  - clean path cache initialized by `x + y`, then decoded with `z` (teacher, stop-grad).
+- `y_tilde` = entropy-ranked Top-K local corruption of `y` where selected positions are replaced by model argmax predictions under clean teacher forcing.
+- `hat_z` = student continuation generated from current model under `x + y_tilde`.
+- Two forward paths share the same continuation history:
+  - corrupted path cache initialized by `x + y_tilde`, then decoded with `hat_z`.
+  - clean path cache initialized by `x + y`, then decoded with the same `hat_z` (teacher, stop-grad).
 - Continuation is processed token-by-token; each step jointly computes:
-  - KL between corrupted vs clean logits at the current step.
+  - JSD between corrupted vs clean logits at the current step.
   - state alignment between corrupted vs clean memory cache states for current step.
 - Loss:
-  - `L = L_kl + lambda_state * L_state`.
+  - `L = L_jsd + lambda_state * L_state`.
 
 ## Current limitations (intentional for first pass)
 - PPO/PG objective is not implemented yet (only KL path).

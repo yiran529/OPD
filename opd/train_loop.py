@@ -17,7 +17,7 @@ from opd.config import TrainConfig
 from opd.distributed import DistEnv, barrier, reduce_mean
 from opd.fineweb_data import build_dataloader
 from opd.losses import OpdLossBundle
-from opd.rollout import generate_dual_rollout_tokens
+from opd.rollout import build_entropy_corrupted_prefix, generate_student_rollout_tokens
 from opd.state_alignment import compute_stepwise_opd_losses
 
 
@@ -90,11 +90,17 @@ def _compute_opd_loss(
     rollout_was_training = rollout_source_model.training
     rollout_source_model.eval()
     with torch.inference_mode():
-        corrupted_prefix, corrupted_z_tokens, clean_z_tokens = generate_dual_rollout_tokens(
+        corrupted_prefix = build_entropy_corrupted_prefix(
             model=rollout_source_model,
             context_tokens=context,
             clean_prefix_tokens=clean_prefix,
-            prefix_len=cfg.prefix_len,
+            topk_ratio=cfg.prefix_corrupt_topk_ratio,
+            topk_max=cfg.prefix_corrupt_topk_max,
+        )
+        student_z_tokens = generate_student_rollout_tokens(
+            model=rollout_source_model,
+            context_tokens=context,
+            corrupted_prefix_tokens=corrupted_prefix,
             continuation_len=cfg.continuation_len,
             temperature=cfg.rollout_temperature,
             top_p=cfg.rollout_top_p,
@@ -108,8 +114,7 @@ def _compute_opd_loss(
         context_tokens=context,
         corrupted_prefix_tokens=corrupted_prefix,
         clean_prefix_tokens=clean_prefix,
-        corrupted_z_tokens=corrupted_z_tokens,
-        clean_z_tokens=clean_z_tokens,
+        student_z_tokens=student_z_tokens,
         lambda_state=cfg.lambda_state,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,

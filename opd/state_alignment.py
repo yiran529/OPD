@@ -6,7 +6,7 @@ from typing import Iterable, List
 import torch
 import torch.nn.functional as F
 
-from opd.losses import OpdLossBundle, time_weighted_kl_from_logits
+from opd.losses import OpdLossBundle, time_weighted_jsd_from_logits
 
 
 def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
@@ -149,7 +149,7 @@ def _state_alignment_loss_from_caches(
             cos_loss = 1.0 - F.cosine_similarity(a, b, dim=-1).mean()
             norm_loss = ((a.norm(dim=-1) - b.norm(dim=-1)) ** 2).mean()
             align_terms.append(
-                cos_loss + 0.01 * norm_loss
+                cos_loss + 0.1 * norm_loss
             )
 
     assert align_terms, "no state alignment terms"
@@ -161,8 +161,7 @@ def compute_stepwise_opd_losses(
     context_tokens: torch.Tensor,
     corrupted_prefix_tokens: torch.Tensor,
     clean_prefix_tokens: torch.Tensor,
-    corrupted_z_tokens: torch.Tensor,
-    clean_z_tokens: torch.Tensor,
+    student_z_tokens: torch.Tensor,
     lambda_state: float,
     state_key: str,
     state_time_stride: int,
@@ -174,21 +173,14 @@ def compute_stepwise_opd_losses(
     assert clean_prefix_tokens.dim() == 2, (
         f"clean_prefix_tokens shape mismatch: expected rank=2, got shape={tuple(clean_prefix_tokens.shape)}"
     )
-    assert corrupted_z_tokens.dim() == 2, (
-        f"corrupted_z_tokens shape mismatch: expected rank=2, got shape={tuple(corrupted_z_tokens.shape)}"
+    assert student_z_tokens.dim() == 2, (
+        f"student_z_tokens shape mismatch: expected rank=2, got shape={tuple(student_z_tokens.shape)}"
     )
-    assert clean_z_tokens.dim() == 2, (
-        f"clean_z_tokens shape mismatch: expected rank=2, got shape={tuple(clean_z_tokens.shape)}"
-    )
-    assert context_tokens.size(0) == corrupted_z_tokens.size(0), "batch size mismatch for corrupted_z_tokens"
-    assert context_tokens.size(0) == clean_z_tokens.size(0), "batch size mismatch for clean_z_tokens"
-    assert corrupted_z_tokens.shape == clean_z_tokens.shape, (
-        f"continuation shape mismatch: corrupted={tuple(corrupted_z_tokens.shape)} clean={tuple(clean_z_tokens.shape)}"
-    )
+    assert context_tokens.size(0) == student_z_tokens.size(0), "batch size mismatch for student_z_tokens"
     assert state_time_stride > 0, "state_time_stride must be positive"
 
-    continuation_len = corrupted_z_tokens.size(1)
-    assert continuation_len > 0, "continuation tokens must be non-empty"
+    continuation_len = student_z_tokens.size(1)
+    assert continuation_len > 0, "student_z_tokens must be non-empty"
 
     corrupted_prefix = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
     clean_prefix = torch.cat([context_tokens, clean_prefix_tokens], dim=1)
@@ -197,7 +189,7 @@ def compute_stepwise_opd_losses(
 
     if model_was_training:
         model.train()
-    # Hard-code prefix stop-grad: do not backprop through x + y_hat prefill.
+    # Hard-code prefix stop-grad: do not backprop through x + y_tilde prefill.
     corr_prev_logits, corrupted_cache = _prefill_cache(
         model=model,
         prefix_tokens=corrupted_prefix,
@@ -220,9 +212,9 @@ def compute_stepwise_opd_losses(
     state_count = 0
 
     for t in range(continuation_len):
-        # KL at continuation step t (supervise current token z_t):
-        #   L_KL(t) = KL( p_theta(. | x, y_hat, hat_z_{<t}) || sg(p_theta(. | x, y, z_{<t})) )
-        kl_term = time_weighted_kl_from_logits(
+        # JSD at continuation step t under shared student rollout history:
+        #   L_JSD(t) = JSD( p_theta(. | x, y_tilde, hat_z_{<t}) || sg(p_theta(. | x, y, hat_z_{<t})) )
+        kl_term = time_weighted_jsd_from_logits(
             student_logits=corr_prev_logits,
             teacher_logits=clean_prev_logits,
             time_step=t,
@@ -230,14 +222,13 @@ def compute_stepwise_opd_losses(
         )
         kl_sum = kl_term if kl_sum is None else kl_sum + kl_term
 
-        corr_token_t = corrupted_z_tokens[:, t : t + 1]
-        clean_token_t = clean_z_tokens[:, t : t + 1]
+        token_t = student_z_tokens[:, t : t + 1]
 
         if model_was_training:
             model.train()
         corr_next_logits, next_corrupted_cache = _decode_one_token(
             model=model,
-            token=corr_token_t,
+            token=token_t,
             past_key_values=corrupted_cache,
             requires_grad=True,
         )
@@ -245,7 +236,7 @@ def compute_stepwise_opd_losses(
         model.eval()
         clean_next_logits, clean_cache = _decode_one_token(
             model=model,
-            token=clean_token_t,
+            token=token_t,
             past_key_values=clean_cache,
             requires_grad=False,
         )

@@ -196,3 +196,19 @@
 - Text inference is implemented under `eval/` (not a separate top-level package) to reuse existing model/checkpoint/output helpers.
 - Shared logic remains flat under `eval/`; format-specific input handling is isolated in `eval/readers/*`.
 - Current supported `input_format` is `txt`; future formats (e.g., parquet) should be added by registering new readers only.
+
+## 2026-03-28-15:00
+- ARC跑的效果较差
+- 用文本推理，发现是被hack了
+
+## 2026-03-29-11:20 : Switch OPD objective to idea-3 style prefix corruption + shared-rollout JSD
+- `opd_kl` objective key is kept unchanged for config compatibility, but training semantics changed:
+  - student prefix is no longer rollout-generated;
+  - corrupted prefix is built from ground-truth prefix by entropy-ranked Top-K token replacement (`y -> y_tilde`);
+  - teacher path no longer performs an independent rollout.
+- Student continuation is a single rollout `hat_z` from `x + y_tilde`; both student and teacher branches decode under shared history `hat_z_{<t}`.
+- Main distribution loss changed from time-weighted KL to time-weighted JSD in `opd/losses.py`.
+- Prefix corruption controls are explicit and fail-fast validated in config:
+  - `prefix_corrupt_topk_ratio` (default `0.25`)
+  - `prefix_corrupt_topk_max` (default `64`)
+- State alignment stays linear time-weighted with `cos + 0.1 * norm` as current default experiment choice.
