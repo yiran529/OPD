@@ -56,6 +56,9 @@ class TrainConfig:
     rollout_top_p: float = 1.0
     prefix_corrupt_topk_ratio: float = 0.25
     prefix_corrupt_topk_max: int = 64
+    ema_teacher_enabled: bool = False
+    ema_decay: float = 0.999
+    ema_start_step: int = 0
 
     log_interval: int = 20
     save_interval: int = 500
@@ -109,6 +112,10 @@ def _validate_config_values(cfg: TrainConfig) -> None:
             "prefix_corrupt_topk_ratio * prefix_len must be >= 1 "
             f"(ratio={cfg.prefix_corrupt_topk_ratio}, prefix_len={cfg.prefix_len})"
         )
+    if not 0.0 <= cfg.ema_decay < 1.0:
+        raise ValueError("ema_decay must be in [0, 1)")
+    if cfg.ema_start_step < 0:
+        raise ValueError("ema_start_step must be >= 0")
     if not cfg.state_key:
         raise ValueError("state_key must be a non-empty string")
     if cfg.state_time_stride <= 0:

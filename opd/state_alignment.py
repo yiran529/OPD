@@ -189,6 +189,7 @@ def _state_alignment_loss_from_caches(
 
 def compute_stepwise_opd_losses(
     model: torch.nn.Module,
+    teacher_model: torch.nn.Module,
     context_tokens: torch.Tensor,
     corrupted_prefix_tokens: torch.Tensor,
     clean_prefix_tokens: torch.Tensor,
@@ -214,10 +215,13 @@ def compute_stepwise_opd_losses(
     corrupted_prefix = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
     clean_prefix = torch.cat([context_tokens, clean_prefix_tokens], dim=1)
 
-    model_was_training = model.training
+    student_was_training = model.training
+    teacher_was_training = teacher_model.training
 
-    if model_was_training:
+    if student_was_training:
         model.train()
+    teacher_model.eval()
+
     # Hard-code prefix stop-grad: do not backprop through x + y_tilde prefill.
     corr_prev_logits, corrupted_cache = _prefill_cache(
         model=model,
@@ -225,14 +229,13 @@ def compute_stepwise_opd_losses(
         requires_grad=False,
     )
 
-    model.eval()
     clean_prev_logits, clean_cache = _prefill_cache(
-        model=model,
+        model=teacher_model,
         prefix_tokens=clean_prefix,
         requires_grad=False,
     )
 
-    if model_was_training:
+    if student_was_training:
         model.train()
 
     # Stream accumulators keep loss construction explicit and avoid retaining per-step lists.
@@ -258,7 +261,7 @@ def compute_stepwise_opd_losses(
                 top_p=rollout_top_p,
             )
 
-        if model_was_training:
+        if student_was_training:
             model.train()
         corr_next_logits, next_corrupted_cache = _decode_one_token(
             model=model,
@@ -267,9 +270,8 @@ def compute_stepwise_opd_losses(
             requires_grad=True,
         )
 
-        model.eval()
         clean_next_logits, clean_cache = _decode_one_token(
-            model=model,
+            model=teacher_model,
             token=token_t,
             past_key_values=clean_cache,
             requires_grad=False,
@@ -292,10 +294,14 @@ def compute_stepwise_opd_losses(
         # Truncate history graph: gradients at step t+1 do not flow into step t.
         corrupted_cache = _detach_tree(next_corrupted_cache)
 
-    if model_was_training:
+    if student_was_training:
         model.train()
     else:
         model.eval()
+    if teacher_was_training:
+        teacher_model.train()
+    else:
+        teacher_model.eval()
 
     assert kl_sum is not None, "no kl terms"
     kl_loss = kl_sum / continuation_len

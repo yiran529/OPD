@@ -45,6 +45,9 @@ rollout_temperature: 1.0
 rollout_top_p: 1.0
 prefix_corrupt_topk_ratio: 0.25
 prefix_corrupt_topk_max: 64
+ema_teacher_enabled: true
+ema_decay: 0.999
+ema_start_step: 0
 
 log_interval: 1
 save_interval: 50

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import random
 import time
 from contextlib import nullcontext
@@ -80,6 +81,7 @@ def _compute_baseline_ce(model: torch.nn.Module, batch_tokens: torch.Tensor):
 
 def _compute_opd_loss(
     model: torch.nn.Module,
+    teacher_model: torch.nn.Module,
     rollout_source_model: torch.nn.Module,
     batch_tokens: torch.Tensor,
     cfg: TrainConfig,
@@ -101,6 +103,7 @@ def _compute_opd_loss(
 
     return compute_stepwise_opd_losses(
         model=model,
+        teacher_model=teacher_model,
         context_tokens=context,
         corrupted_prefix_tokens=corrupted_prefix,
         clean_prefix_tokens=clean_prefix,
@@ -111,6 +114,38 @@ def _compute_opd_loss(
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,
     )
+
+
+def _build_ema_teacher(
+    student_model: torch.nn.Module,
+    cfg: TrainConfig,
+    device: torch.device,
+) -> torch.nn.Module | None:
+    if not (cfg.objective == "opd_kl" and cfg.ema_teacher_enabled):
+        return None
+
+    ema_model = copy.deepcopy(student_model)
+    ema_model.to(device)
+    ema_model.eval()
+    for param in ema_model.parameters():
+        param.requires_grad_(False)
+    return ema_model
+
+
+def _update_ema_teacher(
+    ema_model: torch.nn.Module,
+    student_model: torch.nn.Module,
+    decay: float,
+) -> None:
+    assert 0.0 <= decay < 1.0, f"ema decay out of range: {decay}"
+    with torch.no_grad():
+        for ema_param, student_param in zip(ema_model.parameters(), student_model.parameters()):
+            if not student_param.requires_grad:
+                continue
+            ema_param.lerp_(student_param, 1.0 - decay)
+
+        for ema_buffer, student_buffer in zip(ema_model.buffers(), student_model.buffers()):
+            ema_buffer.copy_(student_buffer)
 
 
 def run_training(
@@ -142,6 +177,13 @@ def run_training(
         )
 
     raw_model = _unwrap_model(model)
+    ema_model = _build_ema_teacher(student_model=raw_model, cfg=cfg, device=dist_env.device)
+    if dist_env.is_main and ema_model is not None:
+        print(
+            "EMA teacher enabled: "
+            f"decay={cfg.ema_decay} start_step={cfg.ema_start_step}",
+            flush=True,
+        )
 
     optimizer, trainable_params = _build_optimizer(model, cfg)
     total_params = 0
@@ -201,6 +243,7 @@ def run_training(
         global_step = load_checkpoint(
             checkpoint_path=cfg.resume_path,
             model=model,
+            ema_model=ema_model,
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
@@ -238,6 +281,7 @@ def run_training(
                 else:
                     opd_loss = _compute_opd_loss(
                         model=model,
+                        teacher_model=ema_model if ema_model is not None else raw_model,
                         rollout_source_model=raw_model,
                         batch_tokens=batch_tokens,
                         cfg=cfg,
@@ -270,6 +314,12 @@ def run_training(
 
         scheduler.step()
         global_step += 1
+        if ema_model is not None and global_step >= cfg.ema_start_step:
+            _update_ema_teacher(
+                ema_model=ema_model,
+                student_model=raw_model,
+                decay=cfg.ema_decay,
+            )
 
         should_log = global_step == 1 or global_step % cfg.log_interval == 0
         if should_log:
@@ -327,6 +377,7 @@ def run_training(
                     checkpoint_dir=checkpoint_dir,
                     step=global_step,
                     model=model,
+                    ema_model=ema_model,
                     optimizer=optimizer,
                     scheduler=scheduler,
                     scaler=scaler,

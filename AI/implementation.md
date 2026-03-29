@@ -22,23 +22,24 @@
   - `opd/rollout.py` builds entropy-ranked Top-K corrupted prefix `y_tilde` from clean prefix `y`.
 - Losses:
   - `opd/losses.py` contains OPD loss bundle + time-weighted JSD primitive.
-  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/clean), online-samples student continuation tokens from corrupted logits, and computes JSD + state alignment in one serial pass.
+  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/student and clean/teacher), online-samples student continuation tokens from corrupted logits, and computes JSD + state alignment in one serial pass.
 - Training loop:
   - `opd/train_loop.py` supports:
     - `baseline_ce` (plain CE finetune),
-    - `opd_kl` (entropy-corruption JSD + state alignment),
+    - `opd_kl` (entropy-corruption JSD + state alignment, with optional EMA teacher),
     - gradient accumulation, AMP autocast, grad clipping, logging, and checkpoint save.
 - Checkpointing:
-  - `opd/checkpoint.py` saves/loads model, optimizer, scheduler, scaler, and RNG states.
+  - `opd/checkpoint.py` saves/loads model, optional EMA teacher model, optimizer, scheduler, scaler, and RNG states.
 
 ## Objective mapping to idea
 - `x` = context segment from packed sequence.
 - `y` = clean prefix segment from ground-truth sequence.
 - `y_tilde` = entropy-ranked Top-K local corruption of `y` where selected positions are replaced by model argmax predictions under clean teacher forcing.
 - `hat_z` = student continuation sampled online from corrupted-branch logits during stepwise decoding.
+- `teacher` = EMA(student) when enabled; otherwise teacher defaults to current model stop-grad path.
 - Two forward paths share the same continuation history:
   - corrupted path cache initialized by `x + y_tilde`, then decoded with `hat_z`.
-  - clean path cache initialized by `x + y`, then decoded with the same `hat_z` (teacher, stop-grad).
+  - clean path cache initialized by `x + y`, then decoded with the same `hat_z` on teacher weights (stop-grad).
 - Continuation is processed token-by-token; each step jointly computes:
   - JSD between corrupted vs clean logits at the current step.
   - state alignment between corrupted vs clean memory cache states for current step.

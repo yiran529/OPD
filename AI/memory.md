@@ -218,3 +218,10 @@
 - `compute_stepwise_opd_losses` now samples student tokens online from corrupted-branch logits at each step (`rollout_temperature` / `rollout_top_p`) and immediately decodes both branches with that token.
 - This keeps the same shared-history training semantics while reducing duplicated decode work (one continuation pass instead of rollout pass + loss pass).
 - Deleted unused rollout helper `generate_student_rollout_tokens` from `opd/rollout.py`.
+
+## 2026-03-29-17:20 : Optional EMA teacher for clean branch supervision
+- Added optional EMA teacher path in training (`ema_teacher_enabled`, `ema_decay`, `ema_start_step`).
+- When enabled, clean/teacher branch logits and cache states in `compute_stepwise_opd_losses` are computed from EMA model weights instead of current student weights.
+- EMA teacher is initialized as a deepcopy of student and updated each optimizer step with decay, only for trainable student parameters; buffers are copied from student.
+- Checkpoint payload now includes `ema_model` when EMA teacher is enabled; resume fails fast if EMA is enabled but checkpoint lacks `ema_model`.
+- Default experiment config `configs/gdn_340m_opd.yaml` enables EMA teacher with `ema_decay=0.999`.

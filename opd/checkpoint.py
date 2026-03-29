@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import torch
@@ -19,6 +20,7 @@ def save_checkpoint(
     checkpoint_dir: Path,
     step: int,
     model: torch.nn.Module,
+    ema_model: Optional[torch.nn.Module],
     optimizer: torch.optim.Optimizer,
     scheduler,
     scaler,
@@ -31,6 +33,7 @@ def save_checkpoint(
     state = {
         "step": step,
         "model": raw_model.state_dict(),
+        "ema_model": ema_model.state_dict() if ema_model is not None else None,
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict() if scheduler is not None else None,
         "scaler": scaler.state_dict() if scaler is not None else None,
@@ -55,6 +58,7 @@ def save_checkpoint(
 def load_checkpoint(
     checkpoint_path: str,
     model: torch.nn.Module,
+    ema_model: Optional[torch.nn.Module],
     optimizer: torch.optim.Optimizer,
     scheduler,
     scaler,
@@ -64,6 +68,14 @@ def load_checkpoint(
     state = torch.load(checkpoint_path, map_location="cpu")
 
     raw_model.load_state_dict(state["model"], strict=True)
+    if ema_model is not None:
+        ema_state = state.get("ema_model", None)
+        if ema_state is None:
+            raise RuntimeError(
+                "Checkpoint is missing ema_model state but ema_teacher_enabled=true. "
+                "Use a matching checkpoint or disable EMA teacher."
+            )
+        ema_model.load_state_dict(ema_state, strict=True)
 
     optimizer.load_state_dict(state["optimizer"])
     for param_state in optimizer.state.values():
@@ -87,5 +99,7 @@ def load_checkpoint(
         torch.cuda.set_rng_state_all(state["rng_torch_cuda"])
 
     raw_model.to(device)
+    if ema_model is not None:
+        ema_model.to(device)
 
     return int(state["step"])

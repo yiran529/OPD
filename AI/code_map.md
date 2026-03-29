@@ -16,9 +16,9 @@
 - `opd/fineweb_data.py`: FineWeb-Edu streaming dataset, rank sharding, token packing into fixed-length chunks.
 - `opd/rollout.py`: entropy-ranked Top-K prefix corruption from clean prefix (`y -> y_tilde`).
 - `opd/losses.py`: shared loss primitives (`OpdLossBundle`, time-weighted JSD from logits).
-- `opd/state_alignment.py`: stepwise OPD loss on FLA cache states (`recurrent_state` etc.), computing JSD + state alignment while online-sampling student continuation tokens (single decode stream shared by clean/corrupted branches).
-- `opd/checkpoint.py`: checkpoint save/load with optimizer/scheduler/scaler/RNG states.
-- `opd/train_loop.py`: explicit training loop for `baseline_ce` and `opd_kl` objectives; `opd_kl` now uses entropy-corrupted prefix + online continuation decoding (teacher does not rollout), and optimizer/grad-clip operate only on trainable params (full or LoRA).
+- `opd/state_alignment.py`: stepwise OPD loss on FLA cache states (`recurrent_state` etc.), computing JSD + state alignment while online-sampling student continuation tokens; clean/teacher branch can run on EMA teacher weights.
+- `opd/checkpoint.py`: checkpoint save/load with model/EMA-model/optimizer/scheduler/scaler/RNG states.
+- `opd/train_loop.py`: explicit training loop for `baseline_ce` and `opd_kl` objectives; `opd_kl` uses entropy-corrupted prefix + online continuation decoding, with optional EMA teacher (`ema_teacher_enabled`) and per-step EMA update.
 
 ## Scripts
 - `scripts/run_1gpu.sh`: single-GPU convenience runner.
