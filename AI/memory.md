@@ -246,3 +246,9 @@
 ## 2026-03-31-00:30 : Add explicit `lambda_kl` weight for OPD total loss
 - Added `lambda_kl` config (default `1.0`) so total OPD loss is now `lambda_kl * loss_kl + lambda_state * loss_state`.
 - Logged `loss_kl` remains the raw unweighted JSD term; only `loss_total` reflects the weighting.
+
+
+## 2026-03-31-01:00 : Eval/Infer can run from pretrained weights without finetune checkpoint
+- `eval` / `infer` config `checkpoint_path` is now optional.
+- When `checkpoint_path` is empty/null, runtime skips `load_model_checkpoint(...)` and evaluates/infers directly from `train_config.model_name` pretrained weights.
+- Output directory checkpoint tag falls back to `pretrained` when no checkpoint path is provided.

@@ -11,7 +11,7 @@ import yaml
 class EvalConfig:
     task: str = "arc_ai2"
     train_config_path: str = "configs/gdn_340m_opd.yaml"
-    checkpoint_path: str = ""
+    checkpoint_path: Optional[str] = None
 
     dataset_name: str = "allenai/ai2_arc"
     dataset_config: str = "ARC-Challenge"
@@ -37,8 +37,6 @@ def _validate_eval_config(cfg: EvalConfig) -> None:
         raise ValueError(f"Unsupported task: {cfg.task}")
     if not cfg.train_config_path:
         raise ValueError("train_config_path must be non-empty")
-    if not cfg.checkpoint_path:
-        raise ValueError("checkpoint_path must be non-empty")
     if not cfg.dataset_name:
         raise ValueError("dataset_name must be non-empty")
     if not cfg.dataset_config:

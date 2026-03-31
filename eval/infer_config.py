@@ -10,7 +10,7 @@ import yaml
 @dataclass
 class InferConfig:
     train_config_path: str = "configs/gdn_340m_opd.yaml"
-    checkpoint_path: str = ""
+    checkpoint_path: Optional[str] = None
 
     input_path: str = ""
     input_format: str = "txt"
@@ -33,8 +33,6 @@ class InferConfig:
 def _validate_infer_config(cfg: InferConfig) -> None:
     if not cfg.train_config_path:
         raise ValueError("train_config_path must be non-empty")
-    if not cfg.checkpoint_path:
-        raise ValueError("checkpoint_path must be non-empty")
     if not cfg.input_path:
         raise ValueError("input_path must be non-empty")
     if cfg.input_format != "txt":

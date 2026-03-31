@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Iterable
 
 
-def checkpoint_tag_from_path(checkpoint_path: str) -> str:
+def checkpoint_tag_from_path(checkpoint_path: str | None) -> str:
+    if not checkpoint_path:
+        return "pretrained"
     return Path(checkpoint_path).stem
 
 

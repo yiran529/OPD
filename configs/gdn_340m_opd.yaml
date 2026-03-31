@@ -22,9 +22,9 @@ sanity_num_samples: 0
 sanity_disable_shuffle: false
 
 objective: opd_kl
-context_len: 64
-prefix_len: 24
-continuation_len: 24
+context_len: 512
+prefix_len: 128
+continuation_len: 256
 
 micro_batch_size: 64
 grad_accum_steps: 1
