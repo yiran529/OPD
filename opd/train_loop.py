@@ -113,6 +113,7 @@ def _compute_opd_loss(
         lambda_state=cfg.lambda_state,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,
+        state_align_loss=cfg.state_align_loss,
     )
 
 

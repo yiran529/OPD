@@ -21,8 +21,8 @@
 - Rollout:
   - `opd/rollout.py` builds entropy-ranked Top-K corrupted prefix `y_tilde` from clean prefix `y`.
 - Losses:
-  - `opd/losses.py` contains OPD loss bundle + time-weighted JSD primitive.
-  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/student and clean/teacher), online-samples student continuation tokens from corrupted logits, and computes JSD + state alignment in one serial pass.
+  - `opd/losses.py` contains OPD loss bundle, time-weighted JSD primitive, and state-tensor alignment math (`gram_mse` / `cos_norm`).
+  - `opd/state_alignment.py` performs stepwise continuation decoding with two caches (corrupted/student and clean/teacher), online-samples student continuation tokens from corrupted logits, and aggregates JSD + state alignment in one serial pass.
 - Training loop:
   - `opd/train_loop.py` supports:
     - `baseline_ce` (plain CE finetune),
@@ -42,7 +42,7 @@
   - clean path cache initialized by `x + y`, then decoded with the same `hat_z` on teacher weights (stop-grad).
 - Continuation is processed token-by-token; each step jointly computes:
   - JSD between corrupted vs clean logits at the current step.
-  - state alignment between corrupted vs clean memory cache states for current step.
+  - state alignment between corrupted vs clean memory cache states for current step; the loss form is selected by config (`gram_mse` or `cos_norm`).
 - Loss:
   - `L = L_jsd + lambda_state * L_state`.
 

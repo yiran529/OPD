@@ -6,7 +6,7 @@ from typing import Iterable, List
 import torch
 import torch.nn.functional as F
 
-from opd.losses import OpdLossBundle, time_weighted_jsd_from_logits
+from opd.losses import OpdLossBundle, state_tensor_alignment_loss, time_weighted_jsd_from_logits
 
 
 def _iter_state_tensors(state_obj) -> Iterable[torch.Tensor]:
@@ -147,16 +147,18 @@ def _state_alignment_loss_from_caches(
     corrupted_cache,
     clean_cache,
     state_key: str,
+    state_align_loss: str,
     time_step: int,
     total_steps: int,
 ) -> torch.Tensor:
     assert len(corrupted_cache) == len(clean_cache), "cache layer count mismatch"
     assert total_steps > 0, "total_steps must be positive"
     assert 0 <= time_step < total_steps, "time_step out of range"
+    assert state_align_loss in {"gram_mse", "cos_norm"}, f"unsupported state_align_loss: {state_align_loss}"
 
     # State alignment at continuation step t:
-    #   L_state(t) = w_t * mean_{layers,tensors} [ (1 - cos(a_t, b_t)) + 0.01 * (||a_t|| - ||b_t||)^2 ]
-    # where a_t is corrupted-path state and b_t is clean-path state (stop-grad), and w_t = ((t+1)/T)^2 with t=time_step, T=total_steps.
+    #   L_state(t) = w_t * mean_{layers,tensors} align(a_t, b_t)
+    # where align is selected by config (`gram_mse` or `cos_norm`), b_t is stop-grad, and w_t = ((t+1)/T).
     time_weight = ((time_step + 1) / total_steps)
     align_terms: List[torch.Tensor] = []
 
@@ -175,12 +177,12 @@ def _state_alignment_loss_from_caches(
                 f"layer {layer_idx} tensor {tensor_idx} shape mismatch: expected={tuple(clean_tensor.shape)} got={tuple(corr_tensor.shape)}"
             )
 
-            a = corr_tensor.float()
-            b = clean_tensor.detach().float()
-            cos_loss = 1.0 - F.cosine_similarity(a, b, dim=-1).mean()
-            norm_loss = ((a.norm(dim=-1) - b.norm(dim=-1)) ** 2).mean()
             align_terms.append(
-                cos_loss + 0.1 * norm_loss
+                state_tensor_alignment_loss(
+                    student_tensor=corr_tensor,
+                    teacher_tensor=clean_tensor,
+                    state_align_loss=state_align_loss,
+                )
             )
 
     assert align_terms, "no state alignment terms"
@@ -199,6 +201,7 @@ def compute_stepwise_opd_losses(
     lambda_state: float,
     state_key: str,
     state_time_stride: int,
+    state_align_loss: str,
 ) -> OpdLossBundle:
     assert context_tokens.dim() == 2, f"context_tokens shape mismatch: expected rank=2, got shape={tuple(context_tokens.shape)}"
     assert corrupted_prefix_tokens.dim() == 2, (
@@ -211,6 +214,7 @@ def compute_stepwise_opd_losses(
     assert rollout_temperature >= 0.0, "rollout_temperature must be >= 0"
     assert 0.0 < rollout_top_p <= 1.0, "rollout_top_p must be in (0, 1]"
     assert state_time_stride > 0, "state_time_stride must be positive"
+    assert state_align_loss in {"gram_mse", "cos_norm"}, f"unsupported state_align_loss: {state_align_loss}"
 
     corrupted_prefix = torch.cat([context_tokens, corrupted_prefix_tokens], dim=1)
     clean_prefix = torch.cat([context_tokens, clean_prefix_tokens], dim=1)
@@ -282,6 +286,7 @@ def compute_stepwise_opd_losses(
                 corrupted_cache=next_corrupted_cache,
                 clean_cache=clean_cache,
                 state_key=state_key,
+                state_align_loss=state_align_loss,
                 time_step=t,
                 total_steps=continuation_len,
             )

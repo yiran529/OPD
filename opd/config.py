@@ -51,6 +51,7 @@ class TrainConfig:
     lambda_state: float = 0.1
     state_key: str = "recurrent_state"
     state_time_stride: int = 1
+    state_align_loss: str = "gram_mse"
 
     rollout_temperature: float = 1.0
     rollout_top_p: float = 1.0
@@ -120,6 +121,8 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("state_key must be a non-empty string")
     if cfg.state_time_stride <= 0:
         raise ValueError("state_time_stride must be positive")
+    if cfg.state_align_loss not in {"gram_mse", "cos_norm"}:
+        raise ValueError(f"Unsupported state_align_loss: {cfg.state_align_loss}")
     if cfg.wandb_mode not in {"online", "offline", "disabled"}:
         raise ValueError(f"Unsupported wandb_mode: {cfg.wandb_mode}")
     if cfg.wandb_enabled and not cfg.wandb_project:

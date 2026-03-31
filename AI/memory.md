@@ -225,3 +225,20 @@
 - EMA teacher is initialized as a deepcopy of student and updated each optimizer step with decay, only for trainable student parameters; buffers are copied from student.
 - Checkpoint payload now includes `ema_model` when EMA teacher is enabled; resume fails fast if EMA is enabled but checkpoint lacks `ema_model`.
 - Default experiment config `configs/gdn_340m_opd.yaml` enables EMA teacher with `ema_decay=0.999`.
+
+
+## 2026-03-31-00:00 : Replace state alignment with Gram-matrix MSE
+- `opd/state_alignment.py` no longer uses `cos + 0.1 * norm` for state alignment.
+- For each state tensor, the code now reshapes it into matrix slices over the last two dimensions, computes `Gram(x) = x x^T`, and applies `MSE(Gram(a), Gram(b))`.
+- Clean-path state remains stop-grad; continuation-level state loss still uses the existing linear time weight `w_t=((t+1)/T)`.
+
+## 2026-03-31-00:10 : Make state alignment loss selectable by config
+- Added `state_align_loss` config with two supported values:
+  - `gram_mse`: `MSE(Gram(a), Gram(b))`
+  - `cos_norm`: legacy `1 - cos(a,b) + 0.1 * (||a|| - ||b||)^2`
+- `compute_stepwise_opd_losses` now routes state alignment through this config while keeping the rest of the OPD training semantics unchanged.
+
+## 2026-03-31-00:20 : Move pure loss math into `opd/losses.py`
+- `opd/losses.py` now owns the pure state-alignment tensor losses (`gram_mse`, `cos_norm`) in addition to JSD.
+- `opd/state_alignment.py` keeps only cache/state traversal, stepwise decode, and per-step aggregation logic.
+- This keeps the boundary explicit: tensor-to-tensor loss math in `losses.py`, rollout/cache execution in `state_alignment.py`.

@@ -22,15 +22,15 @@ sanity_num_samples: 0
 sanity_disable_shuffle: false
 
 objective: opd_kl
-context_len: 768
-prefix_len: 256
-continuation_len: 256
+context_len: 64
+prefix_len: 24
+continuation_len: 24
 
-micro_batch_size: 4
-grad_accum_steps: 8
-max_steps: 20000
+micro_batch_size: 64
+grad_accum_steps: 1
+max_steps: 8000
 learning_rate: 1.0e-5
-weight_decay: 0.1
+weight_decay: 0.01
 adam_beta1: 0.9
 adam_beta2: 0.95
 adam_eps: 1.0e-8
@@ -39,7 +39,8 @@ max_grad_norm: 1.0
 
 lambda_state: 0.1
 state_key: recurrent_state
-state_time_stride: 4
+state_time_stride: 1
+state_align_loss: gram_mse
 
 rollout_temperature: 1.0
 rollout_top_p: 1.0
@@ -50,12 +51,12 @@ ema_decay: 0.999
 ema_start_step: 0
 
 log_interval: 1
-save_interval: 50
-keep_last_k_checkpoints: 2
+save_interval: 500
+keep_last_k_checkpoints: 5
 wandb_enabled: true
 wandb_project: opd
 wandb_entity: null
-wandb_run_name: try1
+wandb_run_name: local_corruption
 wandb_tags: []
 wandb_mode: online
 
