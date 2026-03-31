@@ -44,7 +44,7 @@
   - JSD between corrupted vs clean logits at the current step.
   - state alignment between corrupted vs clean memory cache states for current step; the loss form is selected by config (`gram_mse` or `cos_norm`).
 - Loss:
-  - `L = L_jsd + lambda_state * L_state`.
+  - `L = lambda_kl * L_jsd + lambda_state * L_state`.
 
 ## Current limitations (intentional for first pass)
 - PPO/PG objective is not implemented yet (only KL path).

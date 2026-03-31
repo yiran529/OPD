@@ -110,6 +110,7 @@ def _compute_opd_loss(
         continuation_len=cfg.continuation_len,
         rollout_temperature=cfg.rollout_temperature,
         rollout_top_p=cfg.rollout_top_p,
+        lambda_kl=cfg.lambda_kl,
         lambda_state=cfg.lambda_state,
         state_key=cfg.state_key,
         state_time_stride=cfg.state_time_stride,

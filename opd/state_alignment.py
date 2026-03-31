@@ -198,6 +198,7 @@ def compute_stepwise_opd_losses(
     continuation_len: int,
     rollout_temperature: float,
     rollout_top_p: float,
+    lambda_kl: float,
     lambda_state: float,
     state_key: str,
     state_time_stride: int,
@@ -213,6 +214,8 @@ def compute_stepwise_opd_losses(
     assert continuation_len > 0, "continuation_len must be positive"
     assert rollout_temperature >= 0.0, "rollout_temperature must be >= 0"
     assert 0.0 < rollout_top_p <= 1.0, "rollout_top_p must be in (0, 1]"
+    assert lambda_kl >= 0.0, "lambda_kl must be >= 0"
+    assert lambda_state >= 0.0, "lambda_state must be >= 0"
     assert state_time_stride > 0, "state_time_stride must be positive"
     assert state_align_loss in {"gram_mse", "cos_norm"}, f"unsupported state_align_loss: {state_align_loss}"
 
@@ -316,5 +319,5 @@ def compute_stepwise_opd_losses(
     else:
         state_loss = torch.zeros_like(kl_loss)
 
-    total = kl_loss + lambda_state * state_loss
+    total = lambda_kl * kl_loss + lambda_state * state_loss
     return OpdLossBundle(total=total, kl=kl_loss, state=state_loss)

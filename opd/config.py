@@ -48,6 +48,7 @@ class TrainConfig:
     warmup_steps: int = 500
     max_grad_norm: float = 1.0
 
+    lambda_kl: float = 1.0
     lambda_state: float = 0.1
     state_key: str = "recurrent_state"
     state_time_stride: int = 1
@@ -117,6 +118,10 @@ def _validate_config_values(cfg: TrainConfig) -> None:
         raise ValueError("ema_decay must be in [0, 1)")
     if cfg.ema_start_step < 0:
         raise ValueError("ema_start_step must be >= 0")
+    if cfg.lambda_kl < 0.0:
+        raise ValueError("lambda_kl must be >= 0")
+    if cfg.lambda_state < 0.0:
+        raise ValueError("lambda_state must be >= 0")
     if not cfg.state_key:
         raise ValueError("state_key must be a non-empty string")
     if cfg.state_time_stride <= 0:

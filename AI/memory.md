@@ -242,3 +242,7 @@
 - `opd/losses.py` now owns the pure state-alignment tensor losses (`gram_mse`, `cos_norm`) in addition to JSD.
 - `opd/state_alignment.py` keeps only cache/state traversal, stepwise decode, and per-step aggregation logic.
 - This keeps the boundary explicit: tensor-to-tensor loss math in `losses.py`, rollout/cache execution in `state_alignment.py`.
+
+## 2026-03-31-00:30 : Add explicit `lambda_kl` weight for OPD total loss
+- Added `lambda_kl` config (default `1.0`) so total OPD loss is now `lambda_kl * loss_kl + lambda_state * loss_state`.
+- Logged `loss_kl` remains the raw unweighted JSD term; only `loss_total` reflects the weighting.
