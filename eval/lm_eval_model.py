@@ -34,6 +34,51 @@ def _resolve_device(device: Optional[str]) -> torch.device:
     return torch.device(device)
 
 
+def _resolve_model_max_length(model_config: Any, fallback: int) -> int:
+    candidate_keys = (
+        "max_position_embeddings",
+        "n_positions",
+        "n_ctx",
+        "seq_len",
+    )
+    for key in candidate_keys:
+        value = getattr(model_config, key, None)
+        if isinstance(value, int) and 0 < value < 1_000_000:
+            return int(value)
+    return int(fallback)
+
+
+def _normalize_until(until: Any) -> tuple[str, ...]:
+    if until is None:
+        return tuple()
+    if isinstance(until, str):
+        return (until,) if until else tuple()
+    if isinstance(until, (list, tuple)):
+        stops: list[str] = []
+        for stop in until:
+            if not isinstance(stop, str):
+                raise TypeError(f"until must contain only str values, got type={type(stop)}")
+            if stop:
+                stops.append(stop)
+        return tuple(stops)
+    raise TypeError(f"until must be str/list/tuple/None, got type={type(until)}")
+
+
+def _trim_by_until(text: str, until: tuple[str, ...]) -> str:
+    if not until:
+        return text
+    cut_at: Optional[int] = None
+    for stop in until:
+        idx = text.find(stop)
+        if idx < 0:
+            continue
+        if cut_at is None or idx < cut_at:
+            cut_at = idx
+    if cut_at is None:
+        return text
+    return text[:cut_at]
+
+
 def _load_checkpoint_state(
     checkpoint_path: str,
     model: torch.nn.Module,
@@ -103,9 +148,14 @@ class OPDLMEvalModel(TemplateLM):
             raise ValueError("Tokenizer must define eos_token_id for lm_eval bridge")
         self._eot_token_id = int(eos_token_id)
 
-        self._max_length = int(
+        fallback_max_len = int(
             self.train_cfg.context_len + self.train_cfg.prefix_len + self.train_cfg.continuation_len
         )
+        self._max_length = _resolve_model_max_length(
+            model_config=self.config,
+            fallback=fallback_max_len,
+        )
+        self._max_gen_toks = 256
 
     @property
     def eot_token_id(self) -> int:
@@ -114,6 +164,10 @@ class OPDLMEvalModel(TemplateLM):
     @property
     def max_length(self) -> int:
         return self._max_length
+
+    @property
+    def max_gen_toks(self) -> int:
+        return self._max_gen_toks
 
     @property
     def tokenizer_name(self) -> str:
@@ -269,8 +323,176 @@ class OPDLMEvalModel(TemplateLM):
     def loglikelihood_rolling(self, requests, disable_tqdm: bool = False) -> list[float]:
         raise NotImplementedError("loglikelihood_rolling is not implemented for OPDLMEvalModel")
 
+    def _parse_generate_request(self, request: Any, index: int) -> dict[str, Any]:
+        args = getattr(request, "args", None)
+        if args is None:
+            if isinstance(request, (tuple, list)):
+                args = request
+            else:
+                raise TypeError(f"Unsupported generate request type={type(request)}")
+
+        if not isinstance(args, (tuple, list)):
+            raise TypeError(f"request args must be tuple/list, got type={type(args)}")
+        if len(args) < 1 or len(args) > 3:
+            raise ValueError(f"generate request expects 1..3 args, got n={len(args)}")
+
+        context = args[0]
+        if not isinstance(context, str) or not context:
+            raise ValueError("generate request context must be a non-empty str")
+
+        raw_kwargs: dict[str, Any] = {}
+        if len(args) == 2:
+            second = args[1]
+            if isinstance(second, dict):
+                raw_kwargs = second or {}
+            else:
+                raw_kwargs = {"until": second}
+        elif len(args) == 3:
+            second = args[1]
+            third = args[2] or {}
+            if not isinstance(third, dict):
+                raise TypeError(f"third generate arg must be dict, got type={type(third)}")
+            raw_kwargs = dict(third)
+            raw_kwargs.setdefault("until", second)
+        if not isinstance(raw_kwargs, dict):
+            raise TypeError(f"gen kwargs must be dict, got type={type(raw_kwargs)}")
+
+        supported_keys = {
+            "until",
+            "stop",
+            "max_gen_toks",
+            "max_new_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "do_sample",
+            "repetition_penalty",
+        }
+        unknown_keys = sorted(set(raw_kwargs.keys()) - supported_keys)
+        if unknown_keys:
+            raise ValueError(f"Unsupported generation kwargs: {unknown_keys}")
+
+        if "max_gen_toks" in raw_kwargs and "max_new_tokens" in raw_kwargs:
+            raise ValueError("Specify only one of max_gen_toks or max_new_tokens")
+        max_gen_toks = raw_kwargs.get("max_gen_toks", raw_kwargs.get("max_new_tokens", self.max_gen_toks))
+        if not isinstance(max_gen_toks, int) or max_gen_toks <= 0:
+            raise ValueError(f"max_gen_toks must be positive int, got={max_gen_toks}")
+
+        stop_value = raw_kwargs.get("until", raw_kwargs.get("stop", None))
+        until = _normalize_until(stop_value)
+
+        temperature = float(raw_kwargs.get("temperature", 0.0))
+        if temperature < 0.0:
+            raise ValueError(f"temperature must be >= 0, got={temperature}")
+
+        top_p = float(raw_kwargs.get("top_p", 1.0))
+        if not 0.0 < top_p <= 1.0:
+            raise ValueError(f"top_p must be in (0, 1], got={top_p}")
+
+        top_k = int(raw_kwargs.get("top_k", 0))
+        if top_k < 0:
+            raise ValueError(f"top_k must be >= 0, got={top_k}")
+
+        do_sample = bool(raw_kwargs.get("do_sample", temperature > 0.0))
+        repetition_penalty = float(raw_kwargs.get("repetition_penalty", 1.0))
+        if repetition_penalty <= 0.0:
+            raise ValueError(f"repetition_penalty must be > 0, got={repetition_penalty}")
+
+        group_key = (
+            until,
+            max_gen_toks,
+            do_sample,
+            temperature,
+            top_p,
+            top_k,
+            repetition_penalty,
+        )
+
+        return {
+            "index": index,
+            "context": context,
+            "until": until,
+            "max_gen_toks": max_gen_toks,
+            "do_sample": do_sample,
+            "temperature": temperature,
+            "top_p": top_p,
+            "top_k": top_k,
+            "repetition_penalty": repetition_penalty,
+            "group_key": group_key,
+        }
+
+    def _build_generate_kwargs(self, item: dict[str, Any]) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "max_new_tokens": int(item["max_gen_toks"]),
+            "use_cache": True,
+            "pad_token_id": int(self.tokenizer.pad_token_id),
+            "eos_token_id": int(self.tokenizer.eos_token_id),
+            "do_sample": bool(item["do_sample"]),
+            "repetition_penalty": float(item["repetition_penalty"]),
+        }
+        if kwargs["do_sample"]:
+            kwargs["temperature"] = float(item["temperature"])
+            kwargs["top_p"] = float(item["top_p"])
+            if int(item["top_k"]) > 0:
+                kwargs["top_k"] = int(item["top_k"])
+        return kwargs
+
     def generate_until(self, requests, disable_tqdm: bool = False) -> list[str]:
-        raise NotImplementedError("generate_until is not implemented for OPDLMEvalModel")
+        parsed_requests = [
+            self._parse_generate_request(request=request, index=index)
+            for index, request in enumerate(requests)
+        ]
+        outputs = [""] * len(parsed_requests)
+        grouped: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for item in parsed_requests:
+            key = item["group_key"]
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(item)
+
+        for group_items in grouped.values():
+            for start in range(0, len(group_items), self.batch_size_per_forward):
+                batch_items = group_items[start : start + self.batch_size_per_forward]
+                contexts = [item["context"] for item in batch_items]
+                encoded = self.tokenizer(
+                    contexts,
+                    add_special_tokens=False,
+                    return_tensors="pt",
+                    padding=True,
+                )
+
+                input_ids = encoded["input_ids"].to(self._device)
+                attention_mask = encoded["attention_mask"].to(self._device)
+                prompt_lengths = attention_mask.sum(dim=-1)
+                max_prompt_len = int(prompt_lengths.max().item())
+                max_gen_toks = int(batch_items[0]["max_gen_toks"])
+                if max_prompt_len + max_gen_toks > self.max_length:
+                    raise ValueError(
+                        "Prompt + generation exceeds max length: "
+                        f"prompt_max={max_prompt_len} max_gen_toks={max_gen_toks} max_length={self.max_length}"
+                    )
+
+                generation_kwargs = self._build_generate_kwargs(batch_items[0])
+                with torch.no_grad():
+                    with _autocast_context(self._device):
+                        generated = self.model.generate(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            **generation_kwargs,
+                        )
+
+                prompt_width = input_ids.size(1)
+                new_tokens_batch = generated[:, prompt_width:]
+                for row_idx, item in enumerate(batch_items):
+                    text = self.tokenizer.decode(
+                        new_tokens_batch[row_idx].tolist(),
+                        skip_special_tokens=True,
+                    )
+                    text = _trim_by_until(text=text, until=item["until"])
+                    outputs[item["index"]] = text
+
+        assert all(isinstance(text, str) for text in outputs), "generate_until outputs must be str"
+        return outputs
 
     def get_model_info(self) -> dict[str, Any]:
         return {

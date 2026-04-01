@@ -269,3 +269,9 @@
 ## 2026-04-01-00:20 : Enable `batch_size>1` for lm-eval loglikelihood bridge
 - `eval/lm_eval_model.py` now supports batched loglikelihood scoring (padding + attention_mask + per-sample continuation masks) for `batch_size>1`.
 - The bridge still intentionally remains loglikelihood-only for now: `generate_until` and `loglikelihood_rolling` are still not implemented.
+
+## 2026-04-01-00:45 : Add batched `generate_until` support to lm-eval bridge
+- `eval/lm_eval_model.py` now implements `generate_until(...)` with multi-batch generation.
+- Requests are normalized from lm-eval `Instance.args`, grouped by generation kwargs (`until`, `max_gen_toks`, sampling settings), then executed in padded batches via `model.generate`.
+- Outputs preserve original request order and apply per-request stop-string truncation (`until`/`stop`) after decoding.
+- `loglikelihood_rolling` is still not implemented.
