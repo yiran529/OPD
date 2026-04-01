@@ -30,8 +30,10 @@
 ## Eval Package (`eval/`)
 - `eval/run_eval.py`: unified eval entrypoint (currently routes `task=arc_ai2`).
 - `eval/run_infer.py`: text inference entrypoint (currently routes `input_format=txt`).
+- `eval/run_lm_eval.py`: bridge entrypoint that runs standard `lm-eval-harness` tasks using the repo's native FLA model/checkpoint loader instead of HF auto-model loading.
 - `eval/config.py`: `EvalConfig` dataclass, eval yaml loading, fail-fast validation.
 - `eval/infer_config.py`: `InferConfig` dataclass, infer yaml loading, fail-fast validation.
+- `eval/lm_eval_model.py`: thin `lm-eval` model wrapper that reuses `opd/model_loader.py` and local `.pt` checkpoint loading, implementing the minimal `loglikelihood` path needed by multiple-choice tasks like `arc_easy`.
 - `eval/model_runtime.py`: builds model/tokenizer from train config and loads model checkpoint for eval.
 - `eval/checkpoint_loader.py`: checkpoint-only model state restore for eval (`strict=True`).
 - `eval/io.py`: eval output dir layout + json/jsonl writers.

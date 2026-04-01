@@ -3,7 +3,7 @@ train_config_path: configs/gdn_340m_opd.yaml
 checkpoint_path: outputs/gdn340m-fineweb-opd/checkpoints/step_00000050.pt
 
 dataset_name: allenai/ai2_arc
-dataset_config: ARC-Challenge
+dataset_config: ARC-Easy
 dataset_split: validation
 local_dataset_path: null
 

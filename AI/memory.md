@@ -252,3 +252,20 @@
 - `eval` / `infer` config `checkpoint_path` is now optional.
 - When `checkpoint_path` is empty/null, runtime skips `load_model_checkpoint(...)` and evaluates/infers directly from `train_config.model_name` pretrained weights.
 - Output directory checkpoint tag falls back to `pretrained` when no checkpoint path is provided.
+
+## 2026-03-31-01:10 : ARC eval now scores choice text instead of choice label
+- `eval/tasks/arc_ai2` no longer compares `P(" A" | prompt)` / `P(" B" | prompt)` style answer-label probabilities.
+- The scorer now compares the conditional logprob of each choice's actual text continuation after `Answer:`.
+- Prediction output still reports `pred_label` / `gold_label`; only the scoring continuation changed.
+
+## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
+- Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
+- The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.
+- Instead, it reuses the repo's own `build_model_and_tokenizer(...)` path and the local `.pt` checkpoint format, with optional `ema_model` loading for eval.
+- The first implementation is intentionally narrow:
+  - supports only `loglikelihood`-based tasks;
+  - `generate_until` and `loglikelihood_rolling` are not implemented.
+
+## 2026-04-01-00:20 : Enable `batch_size>1` for lm-eval loglikelihood bridge
+- `eval/lm_eval_model.py` now supports batched loglikelihood scoring (padding + attention_mask + per-sample continuation masks) for `batch_size>1`.
+- The bridge still intentionally remains loglikelihood-only for now: `generate_until` and `loglikelihood_rolling` are still not implemented.

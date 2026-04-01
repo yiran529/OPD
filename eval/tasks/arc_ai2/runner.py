@@ -26,7 +26,7 @@ def run_arc_ai2_eval(
         choice_scores: list[dict] = []
         for choice in example["choices"]:
             label = choice["label"]
-            suffix = build_choice_suffix(choice_label=label)
+            suffix = build_choice_suffix(choice_text=choice["text"])
             score = score_choice_logprob(
                 model=model,
                 tokenizer=tokenizer,

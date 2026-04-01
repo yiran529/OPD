@@ -14,6 +14,6 @@ def build_arc_prompt(question: str, choices: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_choice_suffix(choice_label: str) -> str:
-    assert choice_label, "choice_label must be non-empty"
-    return f" {choice_label}"
+def build_choice_suffix(choice_text: str) -> str:
+    assert choice_text, "choice_text must be non-empty"
+    return f" {choice_text}"
