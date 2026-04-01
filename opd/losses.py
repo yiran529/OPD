@@ -39,7 +39,8 @@ def time_weighted_jsd_from_logits(
     kl_student_mix = (student_probs * (student_log_probs - mix_log_probs)).sum(dim=-1).mean()
     kl_teacher_mix = (teacher_probs * (teacher_log_probs - mix_log_probs)).sum(dim=-1).mean()
     jsd_term = 0.5 * (kl_student_mix + kl_teacher_mix)
-    return time_weight * jsd_term
+    # return time_weight * jsd_term
+    return jsd_term
 
 
 def gram_matrix(tensor: torch.Tensor) -> torch.Tensor:
