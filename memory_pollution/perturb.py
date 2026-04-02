@@ -63,3 +63,28 @@ def apply_random_token_insertion(
         "token_ids": [token_id for _, token_id in scheduled_insertions],
     }
 
+
+def build_perturb_token_preview(
+    tokenizer,
+    clean_prompt_token_ids: list[int],
+    perturb_meta: dict,
+) -> str:
+    assert clean_prompt_token_ids, "clean_prompt_token_ids must be non-empty"
+
+    positions = list(perturb_meta.get("positions", []))
+    token_ids = list(perturb_meta.get("token_ids", []))
+    assert len(positions) == len(token_ids), "perturb positions/token_ids length mismatch"
+
+    insertions_by_position: dict[int, list[int]] = {}
+    for position, token_id in zip(positions, token_ids):
+        insertions_by_position.setdefault(int(position), []).append(int(token_id))
+
+    rendered_tokens: list[str] = []
+    for position in range(len(clean_prompt_token_ids) + 1):
+        for token_id in insertions_by_position.get(position, []):
+            token_text = tokenizer.convert_ids_to_tokens(int(token_id))
+            rendered_tokens.append(f"[[{token_text}]]")
+        if position < len(clean_prompt_token_ids):
+            rendered_tokens.append(str(tokenizer.convert_ids_to_tokens(int(clean_prompt_token_ids[position]))))
+
+    return " ".join(rendered_tokens)

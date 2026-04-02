@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from memory_pollution.config import MemoryPollutionEvalConfig
+from memory_pollution.perturb import build_perturb_token_preview
 from memory_pollution.metrics import compute_arc_metrics
 from memory_pollution.perturb import apply_random_token_insertion
 from memory_pollution.runtime import RuntimeBundle
@@ -35,6 +36,13 @@ def run_arc_eval(
             perturb_seed=cfg.perturb_seed,
             example_id=example["id"],
             perturb_min_tokens=cfg.perturb_min_tokens,
+        )
+        clean_prompt_text = tokenizer.decode(clean_prompt_ids, skip_special_tokens=False)
+        perturbed_prompt_text = tokenizer.decode(perturbed_prompt_ids, skip_special_tokens=False)
+        perturb_token_preview = build_perturb_token_preview(
+            tokenizer=tokenizer,
+            clean_prompt_token_ids=clean_prompt_ids,
+            perturb_meta=perturb_meta,
         )
 
         clean_choice_scores: list[dict] = []
@@ -121,6 +129,9 @@ def run_arc_eval(
                 "per_layer_state_drift": per_layer_state_drift,
                 "clean_prompt_token_len": len(clean_prompt_ids),
                 "perturbed_prompt_token_len": len(perturbed_prompt_ids),
+                "clean_prompt_text": clean_prompt_text,
+                "perturbed_prompt_text": perturbed_prompt_text,
+                "perturb_token_preview": perturb_token_preview,
                 "perturb": perturb_meta,
             }
         )
@@ -134,4 +145,3 @@ def run_arc_eval(
     metrics["perturb_ratio"] = cfg.perturb_ratio
     metrics["perturb_seed"] = cfg.perturb_seed
     return predictions, metrics
-
