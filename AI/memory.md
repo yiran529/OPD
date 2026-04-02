@@ -258,6 +258,23 @@
 - The scorer now compares the conditional logprob of each choice's actual text continuation after `Answer:`.
 - Prediction output still reports `pred_label` / `gold_label`; only the scoring continuation changed.
 
+## 2026-04-02-10:30 : Separate memory-pollution experiment package
+- Added a new top-level package `memory_pollution/` so the memory-pollution benchmark code stays isolated from the OPD training stack under `opd/` and the older downstream eval helpers under `eval/`.
+- The first implementation supports ARC multiple-choice evaluation with deterministic random-token insertion perturbations and optional FLA cache state-drift measurement.
+- Model loading is explicit by backend:
+  - `model_impl=fla` reuses the strict FLA loader from `opd/model_loader.py`,
+  - transformer / hybrid / linear checkpoints should all use the FLA backend, with the concrete model class selected by `expected_architecture`.
+- Multiple-choice scoring in this package follows the lm-eval-style continuation objective `log P(choice_text | prompt)`.
+- For ARC specifically, the prompt is aligned to lm-eval's official task format:
+  - `prompt = "Question: <question>\nAnswer:"`
+  - each answer option text is scored as the continuation.
+- State drift uses normalized L2 distance on the requested FLA cache `state_key`; different FLA model families may require different keys (for example `recurrent_state` vs `attn_state`), and unsupported keys should fail fast.
+
+## 2026-04-02-11:10 : Memory-pollution eval uses FLA backend for transformer too
+- `memory_pollution/` no longer keeps a separate HF-auto loader path.
+- Transformer baselines should use the FLA transformer implementation (`fla.models.transformer.TransformerForCausalLM`) so transformer / hybrid / linear all load through the same strict FLA loader and cache interface.
+- `opd/model_loader.py` class resolution was widened beyond GatedDeltaNet to also probe FLA transformer, GLA, RetNet, HGRN/HGRN2, DeltaNet, and GatedDeltaNet module paths.
+
 ## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
 - Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
 - The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.

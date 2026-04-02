@@ -82,6 +82,18 @@ def _resolve_expected_model_class(cfg: TrainConfig) -> type[torch.nn.Module]:
     module_candidates = (
         "fla",
         "fla.models",
+        "fla.models.transformer",
+        "fla.models.transformer.modeling_transformer",
+        "fla.models.gla",
+        "fla.models.gla.modeling_gla",
+        "fla.models.retnet",
+        "fla.models.retnet.modeling_retnet",
+        "fla.models.hgrn",
+        "fla.models.hgrn.modeling_hgrn",
+        "fla.models.hgrn2",
+        "fla.models.hgrn2.modeling_hgrn2",
+        "fla.models.deltanet",
+        "fla.models.deltanet.modeling_deltanet",
         "fla.models.gated_deltanet",
         "fla.models.gated_deltanet.modeling_gated_deltanet",
     )

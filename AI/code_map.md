@@ -44,5 +44,20 @@
 - `eval/tasks/arc_ai2/runner.py`: ARC eval loop over samples and choices.
 - `eval/tasks/arc_ai2/metrics.py`: basic accuracy metrics aggregation.
 
+## Memory Pollution Package (`memory_pollution/`)
+- `memory_pollution/run_eval.py`: standalone entrypoint for memory-pollution experiments, separate from the training/eval stack under `opd/` and `eval/`.
+- `memory_pollution/config.py`: experiment config dataclass + strict YAML validation for model backend, ARC dataset, perturbation, and state-drift knobs.
+- `memory_pollution/runtime.py`: runtime builder that loads the train config, resolves device, builds the requested model backend, and optionally restores a checkpoint.
+- `memory_pollution/model_loader.py`: backend switch between native FLA loading (`model_impl=fla`, reusing `opd/model_loader.py`) and standard HF causal LM loading (`model_impl=hf_auto`).
+- `memory_pollution/perturb.py`: deterministic random-token insertion on prompt token ids.
+- `memory_pollution/scoring.py`: lm-eval-like multiple-choice continuation scoring over `log P(choice_text | prompt)`.
+- `memory_pollution/state.py`: prompt cache capture plus normalized L2 state-drift computation from FLA cache states.
+- `memory_pollution/metrics.py`: clean/perturb accuracy, accuracy drop, margin drop, and state-drift aggregation.
+- `memory_pollution/tasks/arc.py`: ARC dataset loading, row normalization, prompt formatting, and answer continuation text construction.
+- `memory_pollution/runners/arc_eval.py`: paired clean-vs-perturbed ARC evaluation loop with optional FLA state-drift extraction.
+
+## Memory Pollution Configs
+- `configs/memory_pollution/arc_gdn340m_random_tokens.yaml`: example ARC memory-pollution eval config using the FLA loader and random-token insertion.
+
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.
