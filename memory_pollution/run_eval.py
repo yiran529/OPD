@@ -3,7 +3,13 @@ from __future__ import annotations
 import argparse
 
 from memory_pollution.config import load_config
-from memory_pollution.io import build_output_dir, checkpoint_tag_from_path, write_json, write_jsonl
+from memory_pollution.io import (
+    build_experiment_name,
+    build_output_dir,
+    checkpoint_tag_from_path,
+    write_json,
+    write_jsonl,
+)
 from memory_pollution.runners.arc_eval import run_arc_eval
 from memory_pollution.runtime import build_runtime
 
@@ -23,11 +29,13 @@ def main() -> None:
         raise ValueError(f"Unsupported task: {cfg.task}")
 
     predictions, metrics = run_arc_eval(cfg=cfg, runtime=runtime)
-    run_name = cfg.run_name or runtime.train_cfg.run_name
-    assert run_name, "run_name must be set either in config or train config"
+    experiment_name = cfg.run_name or build_experiment_name(
+        model_name=runtime.train_cfg.model_name,
+        perturb_ratio=cfg.perturb_ratio,
+    )
     output_dir = build_output_dir(
         output_dir=cfg.output_dir,
-        run_name=run_name,
+        experiment_name=experiment_name,
         task=cfg.task,
         checkpoint_tag=checkpoint_tag_from_path(cfg.checkpoint_path),
     )
@@ -50,4 +58,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
