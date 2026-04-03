@@ -1,0 +1,24 @@
+task: arc
+train_config_path: configs/transformer_340m.yaml
+checkpoint_path: null
+model_impl: fla
+
+dataset_name: allenai/ai2_arc
+dataset_config: ARC-Easy
+dataset_split: validation
+local_dataset_path: null
+
+max_samples: 0
+normalize_logprob_by_length: true
+
+perturb_kind: random_tokens
+perturb_ratio: 0.1
+perturb_seed: 1234
+perturb_position: random
+perturb_min_tokens: 1
+
+collect_state_drift: false
+state_key: null
+
+output_dir: outputs
+run_name: null

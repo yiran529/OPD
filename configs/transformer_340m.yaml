@@ -1,0 +1,64 @@
+run_name: transformer_memory_pollution
+output_dir: outputs
+seed: 42
+
+model_name: /data/wyr/models/hf/m-a-p/transformer_340M_baseline
+tokenizer_name: null
+expected_architecture: TransformerForCausalLM
+trust_remote_code: true
+dtype: bf16
+finetune_mode: full
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules: []
+
+dataset_name: /data/wyr/datasets/fineweb-edu-100b
+dataset_config: default
+dataset_split: train
+dataset_text_field: text
+shuffle_buffer_size: 10000
+sanity_num_samples: 0
+sanity_disable_shuffle: false
+
+objective: opd_kl
+context_len: 512
+prefix_len: 64
+continuation_len: 256
+
+micro_batch_size: 4
+grad_accum_steps: 2
+max_steps: 100
+learning_rate: 1.0e-6
+weight_decay: 0.01
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+warmup_steps: 10
+max_grad_norm: 1.0
+
+lambda_kl: 100.0
+lambda_state: 100.0
+state_key: attn_state
+state_time_stride: 4
+state_align_loss: gram_mse
+
+rollout_temperature: 1.0
+rollout_top_p: 1.0
+prefix_corrupt_topk_ratio: 0.08
+prefix_corrupt_topk_max: 64
+ema_teacher_enabled: false
+ema_decay: 0.999
+ema_start_step: 0
+
+log_interval: 1
+save_interval: 10
+keep_last_k_checkpoints: 5
+wandb_enabled: true
+wandb_project: opd
+wandb_entity: null
+wandb_run_name: local_corruption
+wandb_tags: []
+wandb_mode: online
+
+resume_path: null
