@@ -21,6 +21,7 @@ class MemoryPollutionEvalConfig:
 
     max_samples: int = 0
     normalize_logprob_by_length: bool = True
+    eval_batch_size: int = 4
 
     perturb_kind: str = "random_tokens"
     perturb_ratio: float = 0.1
@@ -57,6 +58,8 @@ def _validate_config_values(cfg: MemoryPollutionEvalConfig) -> None:
         raise ValueError("dataset_split must be non-empty")
     if cfg.max_samples < 0:
         raise ValueError("max_samples must be >= 0")
+    if cfg.eval_batch_size <= 0:
+        raise ValueError("eval_batch_size must be positive")
     if cfg.perturb_kind != "random_tokens":
         raise ValueError(f"Unsupported perturb_kind: {cfg.perturb_kind}")
     if cfg.perturb_position != "random":

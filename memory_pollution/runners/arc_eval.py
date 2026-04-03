@@ -5,7 +5,7 @@ from memory_pollution.perturb import build_perturb_token_preview
 from memory_pollution.metrics import compute_arc_metrics
 from memory_pollution.perturb import apply_random_token_insertion
 from memory_pollution.runtime import RuntimeBundle
-from memory_pollution.scoring import score_continuation_from_ids, summarize_choice_scores
+from memory_pollution.scoring import score_continuation_batch_from_ids, summarize_choice_scores
 from memory_pollution.state import capture_prompt_cache, compute_state_drift
 from memory_pollution.tasks.arc import (
     build_arc_prompt,
@@ -14,12 +14,57 @@ from memory_pollution.tasks.arc import (
 )
 
 
+def _score_choice_batch(
+    model,
+    device,
+    pad_token_id: int,
+    prompt_token_ids: list[int],
+    choices: list[dict],
+    tokenizer,
+    normalize_by_length: bool,
+    eval_batch_size: int,
+) -> list[dict]:
+    assert choices, "choices must be non-empty"
+    choice_scores: list[dict] = []
+
+    continuation_payloads: list[tuple[str, list[int]]] = []
+    for choice in choices:
+        continuation_text = build_choice_continuation(choice["text"])
+        continuation_ids = tokenizer(continuation_text, add_special_tokens=False)["input_ids"]
+        assert continuation_ids, "choice continuation tokenization must be non-empty"
+        continuation_payloads.append((choice["label"], continuation_ids))
+
+    for start in range(0, len(continuation_payloads), eval_batch_size):
+        chunk = continuation_payloads[start : start + eval_batch_size]
+        labels = [label for label, _ in chunk]
+        batch_continuation_ids = [continuation_ids for _, continuation_ids in chunk]
+        batch_prompt_ids = [prompt_token_ids for _ in chunk]
+        batch_scores = score_continuation_batch_from_ids(
+            model=model,
+            device=device,
+            pad_token_id=pad_token_id,
+            batch_prompt_token_ids=batch_prompt_ids,
+            batch_continuation_token_ids=batch_continuation_ids,
+            normalize_by_length=normalize_by_length,
+        )
+        assert len(batch_scores) == len(labels), "batch score count mismatch"
+        for label, score in zip(labels, batch_scores):
+            choice_scores.append({"label": label, "score": score})
+
+    return choice_scores
+
+
 def run_arc_eval(
     cfg: MemoryPollutionEvalConfig,
     runtime: RuntimeBundle,
 ) -> tuple[list[dict], dict]:
     predictions: list[dict] = []
     tokenizer = runtime.tokenizer
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_token_id is None:
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        assert eos_token_id is not None, "tokenizer must define pad_token_id or eos_token_id"
+        pad_token_id = int(eos_token_id)
 
     for example in iter_arc_examples(cfg):
         prompt_text = build_arc_prompt(
@@ -45,37 +90,26 @@ def run_arc_eval(
             perturb_meta=perturb_meta,
         )
 
-        clean_choice_scores: list[dict] = []
-        perturb_choice_scores: list[dict] = []
-        for choice in example["choices"]:
-            continuation_text = build_choice_continuation(choice["text"])
-            continuation_ids = tokenizer(continuation_text, add_special_tokens=False)["input_ids"]
-            assert continuation_ids, "choice continuation tokenization must be non-empty"
-
-            clean_choice_scores.append(
-                {
-                    "label": choice["label"],
-                    "score": score_continuation_from_ids(
-                        model=runtime.model,
-                        device=runtime.device,
-                        prompt_token_ids=clean_prompt_ids,
-                        continuation_token_ids=continuation_ids,
-                        normalize_by_length=cfg.normalize_logprob_by_length,
-                    ),
-                }
-            )
-            perturb_choice_scores.append(
-                {
-                    "label": choice["label"],
-                    "score": score_continuation_from_ids(
-                        model=runtime.model,
-                        device=runtime.device,
-                        prompt_token_ids=perturbed_prompt_ids,
-                        continuation_token_ids=continuation_ids,
-                        normalize_by_length=cfg.normalize_logprob_by_length,
-                    ),
-                }
-            )
+        clean_choice_scores = _score_choice_batch(
+            model=runtime.model,
+            device=runtime.device,
+            pad_token_id=int(pad_token_id),
+            prompt_token_ids=clean_prompt_ids,
+            choices=example["choices"],
+            tokenizer=tokenizer,
+            normalize_by_length=cfg.normalize_logprob_by_length,
+            eval_batch_size=cfg.eval_batch_size,
+        )
+        perturb_choice_scores = _score_choice_batch(
+            model=runtime.model,
+            device=runtime.device,
+            pad_token_id=int(pad_token_id),
+            prompt_token_ids=perturbed_prompt_ids,
+            choices=example["choices"],
+            tokenizer=tokenizer,
+            normalize_by_length=cfg.normalize_logprob_by_length,
+            eval_batch_size=cfg.eval_batch_size,
+        )
 
         clean_summary = summarize_choice_scores(
             choice_scores=clean_choice_scores,
@@ -141,6 +175,7 @@ def run_arc_eval(
     metrics["dataset_config"] = cfg.dataset_config
     metrics["dataset_split"] = cfg.dataset_split
     metrics["normalize_logprob_by_length"] = cfg.normalize_logprob_by_length
+    metrics["eval_batch_size"] = cfg.eval_batch_size
     metrics["perturb_kind"] = cfg.perturb_kind
     metrics["perturb_ratio"] = cfg.perturb_ratio
     metrics["perturb_seed"] = cfg.perturb_seed

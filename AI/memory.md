@@ -275,6 +275,14 @@
 - Transformer baselines should use the FLA transformer implementation (`fla.models.transformer.TransformerForCausalLM`) so transformer / hybrid / linear all load through the same strict FLA loader and cache interface.
 - `opd/model_loader.py` class resolution was widened beyond GatedDeltaNet to also probe FLA transformer, GLA, RetNet, HGRN/HGRN2, DeltaNet, and GatedDeltaNet module paths.
 
+## 2026-04-03-11:20 : Memory-pollution eval batches choice-scoring forward only
+- `memory_pollution` now supports `eval_batch_size` for multiple-choice scoring.
+- The current batching scope is intentionally narrow:
+  - clean-choice scoring is batched within each example,
+  - perturbed-choice scoring is batched within each example,
+  - state-drift cache capture remains single-example.
+- This keeps the implementation small while addressing the main eval bottleneck: repeated forward passes over answer choices.
+
 ## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
 - Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
 - The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.
