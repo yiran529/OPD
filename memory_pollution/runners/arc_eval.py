@@ -5,7 +5,7 @@ from memory_pollution.perturb import build_perturb_token_preview
 from memory_pollution.metrics import compute_arc_metrics
 from memory_pollution.perturb import apply_random_token_insertion
 from memory_pollution.runtime import RuntimeBundle
-from memory_pollution.scoring import score_continuation_batch_from_ids, summarize_choice_scores
+from memory_pollution.scoring import score_continuation_batch_from_text, summarize_choice_scores
 from memory_pollution.state import capture_prompt_cache, compute_state_drift
 from memory_pollution.tasks.arc import (
     build_arc_prompt,
@@ -18,7 +18,7 @@ def _score_choice_batch(
     model,
     device,
     pad_token_id: int,
-    prompt_token_ids: list[int],
+    prompt_text: str,
     choices: list[dict],
     tokenizer,
     normalize_by_length: bool,
@@ -27,24 +27,23 @@ def _score_choice_batch(
     assert choices, "choices must be non-empty"
     choice_scores: list[dict] = []
 
-    continuation_payloads: list[tuple[str, list[int]]] = []
+    continuation_payloads: list[tuple[str, str]] = []
     for choice in choices:
         continuation_text = build_choice_continuation(choice["text"])
-        continuation_ids = tokenizer(continuation_text, add_special_tokens=False)["input_ids"]
-        assert continuation_ids, "choice continuation tokenization must be non-empty"
-        continuation_payloads.append((choice["label"], continuation_ids))
+        continuation_payloads.append((choice["label"], continuation_text))
 
     for start in range(0, len(continuation_payloads), eval_batch_size):
         chunk = continuation_payloads[start : start + eval_batch_size]
         labels = [label for label, _ in chunk]
-        batch_continuation_ids = [continuation_ids for _, continuation_ids in chunk]
-        batch_prompt_ids = [prompt_token_ids for _ in chunk]
-        batch_scores = score_continuation_batch_from_ids(
+        batch_continuation_text = [continuation_text for _, continuation_text in chunk]
+        batch_prompt_text = [prompt_text for _ in chunk]
+        batch_scores = score_continuation_batch_from_text(
             model=model,
+            tokenizer=tokenizer,
             device=device,
             pad_token_id=pad_token_id,
-            batch_prompt_token_ids=batch_prompt_ids,
-            batch_continuation_token_ids=batch_continuation_ids,
+            batch_prompt_text=batch_prompt_text,
+            batch_continuation_text=batch_continuation_text,
             normalize_by_length=normalize_by_length,
         )
         assert len(batch_scores) == len(labels), "batch score count mismatch"
@@ -94,7 +93,7 @@ def run_arc_eval(
             model=runtime.model,
             device=runtime.device,
             pad_token_id=int(pad_token_id),
-            prompt_token_ids=clean_prompt_ids,
+            prompt_text=prompt_text,
             choices=example["choices"],
             tokenizer=tokenizer,
             normalize_by_length=cfg.normalize_logprob_by_length,
@@ -104,7 +103,7 @@ def run_arc_eval(
             model=runtime.model,
             device=runtime.device,
             pad_token_id=int(pad_token_id),
-            prompt_token_ids=perturbed_prompt_ids,
+            prompt_text=perturbed_prompt_text,
             choices=example["choices"],
             tokenizer=tokenizer,
             normalize_by_length=cfg.normalize_logprob_by_length,

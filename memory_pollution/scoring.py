@@ -12,39 +12,46 @@ def _autocast_context(device: torch.device):
 
 
 @torch.no_grad()
-def score_continuation_batch_from_ids(
+def score_continuation_batch_from_text(
     model: torch.nn.Module,
+    tokenizer,
     device: torch.device,
     pad_token_id: int,
-    batch_prompt_token_ids: list[list[int]],
-    batch_continuation_token_ids: list[list[int]],
+    batch_prompt_text: list[str],
+    batch_continuation_text: list[str],
     normalize_by_length: bool,
 ) -> list[float]:
-    assert batch_prompt_token_ids, "batch_prompt_token_ids must be non-empty"
-    assert len(batch_prompt_token_ids) == len(batch_continuation_token_ids), (
+    assert batch_prompt_text, "batch_prompt_text must be non-empty"
+    assert len(batch_prompt_text) == len(batch_continuation_text), (
         "batch prompt/continuation length mismatch"
     )
 
     # For multiple-choice scoring we evaluate log P(choice_text | prompt).
     # In ARC, `prompt` is the task prompt ("Question: ...\nAnswer:"),
     # while each answer option is scored as the continuation.
-    batch_size = len(batch_prompt_token_ids)
+    batch_size = len(batch_prompt_text)
     full_batch: list[list[int]] = []
     prompt_lens: list[int] = []
     full_lens: list[int] = []
     continuation_lens: list[int] = []
 
-    for prompt_token_ids, continuation_token_ids in zip(
-        batch_prompt_token_ids,
-        batch_continuation_token_ids,
+    for prompt_text, continuation_text in zip(
+        batch_prompt_text,
+        batch_continuation_text,
     ):
-        assert prompt_token_ids, "prompt_token_ids must be non-empty"
-        assert continuation_token_ids, "continuation_token_ids must be non-empty"
-        full_ids = prompt_token_ids + continuation_token_ids
+        assert prompt_text, "prompt_text must be non-empty"
+        assert continuation_text, "continuation_text must be non-empty"
+
+        prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+        full_ids = tokenizer(prompt_text + continuation_text, add_special_tokens=False)["input_ids"]
+        continuation_len = len(full_ids) - len(prompt_ids)
+        assert prompt_ids, "prompt tokenization must be non-empty"
+        assert continuation_len > 0, "continuation must add at least one token"
+
         full_batch.append(full_ids)
-        prompt_lens.append(len(prompt_token_ids))
+        prompt_lens.append(len(prompt_ids))
         full_lens.append(len(full_ids))
-        continuation_lens.append(len(continuation_token_ids))
+        continuation_lens.append(continuation_len)
 
     max_len = max(full_lens)
     assert max_len >= 2, "full sequence length must be at least 2 tokens"
@@ -99,7 +106,9 @@ def score_continuation_batch_from_ids(
         mask = target_mask[idx]
         assert mask.any(), "no target positions found for continuation"
         selected = token_log_probs[idx, mask]
-        assert selected.numel() == continuation_len, "continuation token count mismatch"
+        assert selected.numel() == continuation_len, (
+            f"continuation token count mismatch: expected={continuation_len} got={selected.numel()}"
+        )
         total_logprob = selected.sum()
 
         if normalize_by_length:
@@ -111,20 +120,22 @@ def score_continuation_batch_from_ids(
 
 
 @torch.no_grad()
-def score_continuation_from_ids(
+def score_continuation_from_text(
     model: torch.nn.Module,
+    tokenizer,
     device: torch.device,
     pad_token_id: int,
-    prompt_token_ids: list[int],
-    continuation_token_ids: list[int],
+    prompt_text: str,
+    continuation_text: str,
     normalize_by_length: bool,
 ) -> float:
-    scores = score_continuation_batch_from_ids(
+    scores = score_continuation_batch_from_text(
         model=model,
+        tokenizer=tokenizer,
         device=device,
         pad_token_id=pad_token_id,
-        batch_prompt_token_ids=[prompt_token_ids],
-        batch_continuation_token_ids=[continuation_token_ids],
+        batch_prompt_text=[prompt_text],
+        batch_continuation_text=[continuation_text],
         normalize_by_length=normalize_by_length,
     )
     assert len(scores) == 1, "single-item score must return exactly one result"
