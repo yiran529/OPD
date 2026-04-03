@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import torch
 
 from eval.checkpoint_loader import load_model_checkpoint
-from memory_pollution.config import MemoryPollutionEvalConfig
+from memory_pollution.config import MemoryPollutionEvalConfig, resolve_train_config
 from memory_pollution.model_loader import build_model_and_tokenizer
-from opd.config import TrainConfig, load_config as load_train_config
+from opd.config import TrainConfig
 
 
 def resolve_device() -> torch.device:
@@ -28,7 +28,7 @@ class RuntimeBundle:
 
 
 def build_runtime(cfg: MemoryPollutionEvalConfig) -> RuntimeBundle:
-    train_cfg = load_train_config(cfg.train_config_path)
+    train_cfg = resolve_train_config(cfg)
     device = resolve_device()
 
     model, tokenizer = build_model_and_tokenizer(

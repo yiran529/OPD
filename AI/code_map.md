@@ -46,7 +46,7 @@
 
 ## Memory Pollution Package (`memory_pollution/`)
 - `memory_pollution/run_eval.py`: standalone entrypoint for memory-pollution experiments, separate from the training/eval stack under `opd/` and `eval/`.
-- `memory_pollution/config.py`: experiment config dataclass + strict YAML validation for model backend, ARC dataset, perturbation, and state-drift knobs.
+- `memory_pollution/config.py`: experiment config dataclass + strict YAML validation; supports either `train_config_path` reuse or fully self-contained inline model-loader fields in `configs/memory_pollution/*.yaml`, but keeps eval path full-finetune only (no LoRA support).
 - `memory_pollution/runtime.py`: runtime builder that loads the train config, resolves device, builds the requested model backend, and optionally restores a checkpoint.
 - `memory_pollution/model_loader.py`: backend switch between native FLA loading (`model_impl=fla`, reusing `opd/model_loader.py`) and standard HF causal LM loading (`model_impl=hf_auto`).
 - `memory_pollution/perturb.py`: deterministic random-token insertion on prompt token ids.

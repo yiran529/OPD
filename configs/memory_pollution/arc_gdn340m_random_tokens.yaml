@@ -1,7 +1,12 @@
 task: arc
-train_config_path: configs/gdn_340m_opd.yaml
+train_config_path: null
 checkpoint_path: null
 model_impl: fla
+model_name: m-a-p/340M-20B-GatedDeltaNet-pure-baseline
+tokenizer_name: null
+expected_architecture: GatedDeltaNetForCausalLM
+trust_remote_code: true
+dtype: bf16
 
 dataset_name: allenai/ai2_arc
 dataset_config: ARC-Challenge
@@ -19,7 +24,7 @@ perturb_position: random
 perturb_min_tokens: 1
 
 collect_state_drift: true
-state_key: null
+state_key: recurrent_state
 
 output_dir: outputs
 run_name: null

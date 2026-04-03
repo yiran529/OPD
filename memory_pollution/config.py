@@ -6,13 +6,20 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from opd.config import TrainConfig, load_config as load_train_config
+
 
 @dataclass
 class MemoryPollutionEvalConfig:
     task: str = "arc"
-    train_config_path: str = "configs/gdn_340m_opd.yaml"
+    train_config_path: Optional[str] = None
     checkpoint_path: Optional[str] = None
     model_impl: str = "fla"
+    model_name: Optional[str] = None
+    tokenizer_name: Optional[str] = None
+    expected_architecture: Optional[str] = None
+    trust_remote_code: bool = True
+    dtype: str = "bf16"
 
     dataset_name: str = "allenai/ai2_arc"
     dataset_config: str = "ARC-Challenge"
@@ -43,13 +50,25 @@ class MemoryPollutionEvalConfig:
         return asdict(self)
 
 
+def _has_inline_model_config(cfg: MemoryPollutionEvalConfig) -> bool:
+    return bool(cfg.model_name or cfg.expected_architecture or cfg.tokenizer_name)
+
+
 def _validate_config_values(cfg: MemoryPollutionEvalConfig) -> None:
     if cfg.task != "arc":
         raise ValueError(f"Unsupported task: {cfg.task}")
-    if not cfg.train_config_path:
-        raise ValueError("train_config_path must be non-empty")
     if cfg.model_impl != "fla":
         raise ValueError(f"Unsupported model_impl: {cfg.model_impl}")
+    if not cfg.train_config_path and not _has_inline_model_config(cfg):
+        raise ValueError(
+            "Specify either train_config_path or inline model config "
+            "(at minimum model_name + expected_architecture)"
+        )
+    if _has_inline_model_config(cfg):
+        if not cfg.model_name:
+            raise ValueError("model_name must be set when using inline model config")
+        if not cfg.expected_architecture:
+            raise ValueError("expected_architecture must be set when using inline model config")
     if not cfg.dataset_name:
         raise ValueError("dataset_name must be non-empty")
     if not cfg.dataset_config:
@@ -70,6 +89,33 @@ def _validate_config_values(cfg: MemoryPollutionEvalConfig) -> None:
         raise ValueError("perturb_min_tokens must be >= 0")
     if cfg.state_key is not None and not cfg.state_key:
         raise ValueError("state_key must be null or a non-empty string")
+
+
+def resolve_train_config(cfg: MemoryPollutionEvalConfig) -> TrainConfig:
+    if cfg.train_config_path:
+        train_cfg = load_train_config(cfg.train_config_path)
+        if train_cfg.finetune_mode != "full":
+            raise ValueError(
+                "memory_pollution eval supports finetune_mode=full only; "
+                f"got finetune_mode={train_cfg.finetune_mode} from train_config_path"
+            )
+        if not _has_inline_model_config(cfg):
+            return train_cfg
+    else:
+        train_cfg = TrainConfig()
+
+    if cfg.model_name is not None:
+        train_cfg.model_name = cfg.model_name
+    if cfg.tokenizer_name is not None:
+        train_cfg.tokenizer_name = cfg.tokenizer_name
+    if cfg.expected_architecture is not None:
+        train_cfg.expected_architecture = cfg.expected_architecture
+    train_cfg.trust_remote_code = cfg.trust_remote_code
+    train_cfg.dtype = cfg.dtype
+    train_cfg.finetune_mode = "full"
+    if cfg.state_key is not None:
+        train_cfg.state_key = cfg.state_key
+    return train_cfg
 
 
 def load_config(path: str) -> MemoryPollutionEvalConfig:

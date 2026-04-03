@@ -283,6 +283,18 @@
   - state-drift cache capture remains single-example.
 - This keeps the implementation small while addressing the main eval bottleneck: repeated forward passes over answer choices.
 
+## 2026-04-03-11:40 : Memory-pollution configs can be self-contained
+- `configs/memory_pollution/*.yaml` no longer need to point to a separate train config file.
+- `memory_pollution/config.py` now supports two loading modes:
+  - `train_config_path` for reusing an existing `TrainConfig`,
+  - inline model-loader fields (`model_name`, `expected_architecture`, `dtype`, etc.) for self-contained eval configs.
+- When both are present, `train_config_path` provides the base config and inline model-loader fields override it.
+
+## 2026-04-03-11:55 : Memory-pollution eval drops LoRA support
+- `memory_pollution` is now explicitly eval-only and supports `finetune_mode=full` only.
+- Self-contained memory-pollution configs no longer expose LoRA knobs.
+- If `train_config_path` points to a LoRA training config, runtime now fails fast instead of silently inheriting adapter settings.
+
 ## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
 - Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
 - The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.
