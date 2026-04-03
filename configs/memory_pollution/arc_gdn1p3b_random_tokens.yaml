@@ -2,7 +2,7 @@ task: arc
 train_config_path: null
 checkpoint_path: null
 model_impl: fla
-model_name: m-a-p/340M-20B-GatedDeltaNet-pure-baseline
+model_name: m-a-p/1.3B-100B-GatedDeltaNet-pure
 tokenizer_name: null
 expected_architecture: GatedDeltaNetForCausalLM
 trust_remote_code: true
