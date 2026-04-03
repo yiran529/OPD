@@ -22,7 +22,7 @@ class MemoryPollutionEvalConfig:
     dtype: str = "bf16"
 
     dataset_name: str = "allenai/ai2_arc"
-    dataset_config: str = "ARC-Challenge"
+    dataset_config: Optional[str] = "ARC-Challenge"
     dataset_split: str = "validation"
     local_dataset_path: Optional[str] = None
 
@@ -55,7 +55,7 @@ def _has_inline_model_config(cfg: MemoryPollutionEvalConfig) -> bool:
 
 
 def _validate_config_values(cfg: MemoryPollutionEvalConfig) -> None:
-    if cfg.task != "arc":
+    if cfg.task not in {"arc", "lambada_openai"}:
         raise ValueError(f"Unsupported task: {cfg.task}")
     if cfg.model_impl != "fla":
         raise ValueError(f"Unsupported model_impl: {cfg.model_impl}")
@@ -71,10 +71,10 @@ def _validate_config_values(cfg: MemoryPollutionEvalConfig) -> None:
             raise ValueError("expected_architecture must be set when using inline model config")
     if not cfg.dataset_name:
         raise ValueError("dataset_name must be non-empty")
-    if not cfg.dataset_config:
-        raise ValueError("dataset_config must be non-empty")
     if not cfg.dataset_split:
         raise ValueError("dataset_split must be non-empty")
+    if cfg.task == "arc" and not cfg.dataset_config:
+        raise ValueError("dataset_config must be non-empty for task=arc")
     if cfg.max_samples < 0:
         raise ValueError("max_samples must be >= 0")
     if cfg.eval_batch_size <= 0:

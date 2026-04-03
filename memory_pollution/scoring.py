@@ -12,7 +12,7 @@ def _autocast_context(device: torch.device):
 
 
 @torch.no_grad()
-def score_continuation_batch_from_text(
+def score_continuation_details_batch_from_text(
     model: torch.nn.Module,
     tokenizer,
     device: torch.device,
@@ -20,15 +20,14 @@ def score_continuation_batch_from_text(
     batch_prompt_text: list[str],
     batch_continuation_text: list[str],
     normalize_by_length: bool,
-) -> list[float]:
+) -> list[dict]:
     assert batch_prompt_text, "batch_prompt_text must be non-empty"
     assert len(batch_prompt_text) == len(batch_continuation_text), (
         "batch prompt/continuation length mismatch"
     )
 
-    # For multiple-choice scoring we evaluate log P(choice_text | prompt).
-    # In ARC, `prompt` is the task prompt ("Question: ...\nAnswer:"),
-    # while each answer option is scored as the continuation.
+    # Evaluate continuation log P(continuation | prompt) with a joint
+    # tokenization boundary, and also record greedy exact-match metadata.
     batch_size = len(batch_prompt_text)
     full_batch: list[list[int]] = []
     prompt_lens: list[int] = []
@@ -101,22 +100,55 @@ def score_continuation_batch_from_text(
     log_probs = torch.log_softmax(shifted_logits, dim=-1)
     token_log_probs = log_probs.gather(dim=-1, index=shifted_targets.unsqueeze(-1)).squeeze(-1)
 
-    scores: list[float] = []
+    greedy_tokens = shifted_logits.argmax(dim=-1)
+    greedy_matches = greedy_tokens.eq(shifted_targets)
+
+    scores: list[dict] = []
     for idx, continuation_len in enumerate(continuation_lens):
         mask = target_mask[idx]
         assert mask.any(), "no target positions found for continuation"
         selected = token_log_probs[idx, mask]
+        selected_greedy = greedy_matches[idx, mask]
         assert selected.numel() == continuation_len, (
             f"continuation token count mismatch: expected={continuation_len} got={selected.numel()}"
         )
         total_logprob = selected.sum()
+        normalized_logprob = total_logprob / selected.numel()
+        score_value = normalized_logprob if normalize_by_length else total_logprob
 
-        if normalize_by_length:
-            total_logprob = total_logprob / selected.numel()
-
-        scores.append(float(total_logprob.item()))
+        scores.append(
+            {
+                "score": float(score_value.item()),
+                "logprob": float(total_logprob.item()),
+                "normalized_logprob": float(normalized_logprob.item()),
+                "is_greedy_exact": bool(selected_greedy.all().item()),
+                "num_tokens": int(selected.numel()),
+            }
+        )
 
     return scores
+
+
+@torch.no_grad()
+def score_continuation_batch_from_text(
+    model: torch.nn.Module,
+    tokenizer,
+    device: torch.device,
+    pad_token_id: int,
+    batch_prompt_text: list[str],
+    batch_continuation_text: list[str],
+    normalize_by_length: bool,
+) -> list[float]:
+    details = score_continuation_details_batch_from_text(
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        pad_token_id=pad_token_id,
+        batch_prompt_text=batch_prompt_text,
+        batch_continuation_text=batch_continuation_text,
+        normalize_by_length=normalize_by_length,
+    )
+    return [float(item["score"]) for item in details]
 
 
 @torch.no_grad()
@@ -140,6 +172,29 @@ def score_continuation_from_text(
     )
     assert len(scores) == 1, "single-item score must return exactly one result"
     return scores[0]
+
+
+@torch.no_grad()
+def score_continuation_details_from_text(
+    model: torch.nn.Module,
+    tokenizer,
+    device: torch.device,
+    pad_token_id: int,
+    prompt_text: str,
+    continuation_text: str,
+    normalize_by_length: bool,
+) -> dict:
+    details = score_continuation_details_batch_from_text(
+        model=model,
+        tokenizer=tokenizer,
+        device=device,
+        pad_token_id=pad_token_id,
+        batch_prompt_text=[prompt_text],
+        batch_continuation_text=[continuation_text],
+        normalize_by_length=normalize_by_length,
+    )
+    assert len(details) == 1, "single-item score must return exactly one result"
+    return details[0]
 
 
 def summarize_choice_scores(choice_scores: list[dict], gold_label: str) -> dict:

@@ -169,13 +169,5 @@ def run_arc_eval(
             }
         )
 
-    metrics = compute_arc_metrics(predictions)
-    metrics["dataset_name"] = cfg.dataset_name
-    metrics["dataset_config"] = cfg.dataset_config
-    metrics["dataset_split"] = cfg.dataset_split
-    metrics["normalize_logprob_by_length"] = cfg.normalize_logprob_by_length
-    metrics["eval_batch_size"] = cfg.eval_batch_size
-    metrics["perturb_kind"] = cfg.perturb_kind
-    metrics["perturb_ratio"] = cfg.perturb_ratio
-    metrics["perturb_seed"] = cfg.perturb_seed
+    metrics = compute_arc_metrics(predictions, cfg=cfg)
     return predictions, metrics

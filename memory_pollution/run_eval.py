@@ -11,6 +11,7 @@ from memory_pollution.io import (
     write_jsonl,
 )
 from memory_pollution.runners.arc_eval import run_arc_eval
+from memory_pollution.runners.lambada_openai_eval import run_lambada_openai_eval
 from memory_pollution.runtime import build_runtime
 
 
@@ -25,10 +26,22 @@ def main() -> None:
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
 
-    if cfg.task != "arc":
+    if cfg.task == "arc":
+        predictions, metrics = run_arc_eval(cfg=cfg, runtime=runtime)
+        summary = (
+            f"clean_accuracy={metrics['clean_accuracy']:.4f} "
+            f"perturb_accuracy={metrics['perturb_accuracy']:.4f}"
+        )
+    elif cfg.task == "lambada_openai":
+        predictions, metrics = run_lambada_openai_eval(cfg=cfg, runtime=runtime)
+        summary = (
+            f"clean_acc={metrics['clean_acc']:.4f} "
+            f"perturb_acc={metrics['perturb_acc']:.4f} "
+            f"clean_perplexity={metrics['clean_perplexity']:.4f} "
+            f"perturb_perplexity={metrics['perturb_perplexity']:.4f}"
+        )
+    else:
         raise ValueError(f"Unsupported task: {cfg.task}")
-
-    predictions, metrics = run_arc_eval(cfg=cfg, runtime=runtime)
     experiment_name = cfg.run_name or build_experiment_name(
         model_name=runtime.train_cfg.model_name,
         perturb_ratio=cfg.perturb_ratio,
@@ -50,8 +63,7 @@ def main() -> None:
 
     print(
         f"Memory pollution eval done: task={cfg.task} config={cfg.dataset_config} split={cfg.dataset_split} "
-        f"clean_accuracy={metrics['clean_accuracy']:.4f} perturb_accuracy={metrics['perturb_accuracy']:.4f} "
-        f"output_dir={output_dir}",
+        f"{summary} output_dir={output_dir}",
         flush=True,
     )
 

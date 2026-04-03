@@ -46,18 +46,22 @@
 
 ## Memory Pollution Package (`memory_pollution/`)
 - `memory_pollution/run_eval.py`: standalone entrypoint for memory-pollution experiments, separate from the training/eval stack under `opd/` and `eval/`.
-- `memory_pollution/config.py`: experiment config dataclass + strict YAML validation; supports either `train_config_path` reuse or fully self-contained inline model-loader fields in `configs/memory_pollution/*.yaml`, but keeps eval path full-finetune only (no LoRA support).
+- `memory_pollution/config.py`: experiment config dataclass + strict YAML validation; supports `task=arc|lambada_openai`, either `train_config_path` reuse or fully self-contained inline model-loader fields in `configs/memory_pollution/*.yaml`, and keeps eval path full-finetune only (no LoRA support).
 - `memory_pollution/runtime.py`: runtime builder that loads the train config, resolves device, builds the requested model backend, and optionally restores a checkpoint.
-- `memory_pollution/model_loader.py`: backend switch between native FLA loading (`model_impl=fla`, reusing `opd/model_loader.py`) and standard HF causal LM loading (`model_impl=hf_auto`).
+- `memory_pollution/model_loader.py`: thin wrapper over native FLA loading (`model_impl=fla`, reusing `opd/model_loader.py`).
 - `memory_pollution/perturb.py`: deterministic random-token insertion on prompt token ids.
-- `memory_pollution/scoring.py`: lm-eval-like multiple-choice continuation scoring over `log P(choice_text | prompt)`.
+- `memory_pollution/scoring.py`: shared joint-tokenization scorer for continuation logprob / greedy-exact evaluation, reused by ARC and `lambada_openai`.
 - `memory_pollution/state.py`: prompt cache capture plus normalized L2 state-drift computation from FLA cache states.
-- `memory_pollution/metrics.py`: clean/perturb accuracy, accuracy drop, margin drop, and state-drift aggregation.
+- `memory_pollution/metrics.py`: task-level metric aggregation for ARC and `lambada_openai`, plus shared experiment metadata attachment.
 - `memory_pollution/tasks/arc.py`: ARC dataset loading, row normalization, prompt formatting, and answer continuation text construction.
+- `memory_pollution/tasks/lambada_openai.py`: lm-eval-aligned LAMBADA OpenAI dataset loading and `context/target` splitting via final-space split.
 - `memory_pollution/runners/arc_eval.py`: paired clean-vs-perturbed ARC evaluation loop with optional FLA state-drift extraction.
+- `memory_pollution/runners/lambada_openai_eval.py`: paired clean-vs-perturbed `lambada_openai` evaluation loop with exact-match/logprob outputs and optional FLA state-drift extraction.
 
 ## Memory Pollution Configs
 - `configs/memory_pollution/arc_gdn340m_random_tokens.yaml`: example ARC memory-pollution eval config using the FLA loader and random-token insertion.
+- `configs/memory_pollution/lambada_openai_gdn340m_random_tokens.yaml`: example `lambada_openai` memory-pollution eval config for GatedDeltaNet.
+- `configs/memory_pollution/lambada_openai_transformer340m_random_tokens.yaml`: example `lambada_openai` memory-pollution eval config for Transformer.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

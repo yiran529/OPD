@@ -1,0 +1,30 @@
+task: lambada_openai
+train_config_path: null
+checkpoint_path: null
+model_impl: fla
+model_name: m-a-p/transformer_340M_baseline
+tokenizer_name: null
+expected_architecture: TransformerForCausalLM
+trust_remote_code: true
+dtype: bf16
+
+dataset_name: EleutherAI/lambada_openai
+dataset_config: null
+dataset_split: test
+local_dataset_path: null
+
+max_samples: 0
+normalize_logprob_by_length: false
+eval_batch_size: 1
+
+perturb_kind: random_tokens
+perturb_ratio: 0.4
+perturb_seed: 42
+perturb_position: random
+perturb_min_tokens: 1
+
+collect_state_drift: false
+state_key: attn_state
+
+output_dir: outputs
+run_name: null

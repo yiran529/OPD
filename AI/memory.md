@@ -275,6 +275,24 @@
 - Transformer baselines should use the FLA transformer implementation (`fla.models.transformer.TransformerForCausalLM`) so transformer / hybrid / linear all load through the same strict FLA loader and cache interface.
 - `opd/model_loader.py` class resolution was widened beyond GatedDeltaNet to also probe FLA transformer, GLA, RetNet, HGRN/HGRN2, DeltaNet, and GatedDeltaNet module paths.
 
+## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
+- Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
+- The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.
+- Instead, it reuses the repo's own `build_model_and_tokenizer(...)` path and the local `.pt` checkpoint format, with optional `ema_model` loading for eval.
+- The first implementation is intentionally narrow:
+  - supports only `loglikelihood`-based tasks;
+  - `generate_until` and `loglikelihood_rolling` are not implemented.
+
+## 2026-04-01-00:20 : Enable `batch_size>1` for lm-eval loglikelihood bridge
+- `eval/lm_eval_model.py` now supports batched loglikelihood scoring (padding + attention_mask + per-sample continuation masks) for `batch_size>1`.
+- The bridge still intentionally remains loglikelihood-only for now: `generate_until` and `loglikelihood_rolling` are still not implemented.
+
+## 2026-04-01-00:45 : Add batched `generate_until` support to lm-eval bridge
+- `eval/lm_eval_model.py` now implements `generate_until(...)` with multi-batch generation.
+- Requests are normalized from lm-eval `Instance.args`, grouped by generation kwargs (`until`, `max_gen_toks`, sampling settings), then executed in padded batches via `model.generate`.
+- Outputs preserve original request order and apply per-request stop-string truncation (`until`/`stop`) after decoding.
+- `loglikelihood_rolling` is still not implemented.
+
 ## 2026-04-03-11:20 : Memory-pollution eval batches choice-scoring forward only
 - `memory_pollution` now supports `eval_batch_size` for multiple-choice scoring.
 - The current batching scope is intentionally narrow:
@@ -295,20 +313,10 @@
 - Self-contained memory-pollution configs no longer expose LoRA knobs.
 - If `train_config_path` points to a LoRA training config, runtime now fails fast instead of silently inheriting adapter settings.
 
-## 2026-03-31-02:00 : Add local `lm-eval-harness` bridge for FLA models
-- Added `eval/run_lm_eval.py` and `eval/lm_eval_model.py` to run standard `lm-eval-harness` tasks without modifying `lm-eval` source code.
-- The bridge does **not** use `lm-eval`'s default HF auto-model loader, because the local FLA `gated_deltanet` checkpoints are not directly loadable via `AutoConfig` / `AutoModel`.
-- Instead, it reuses the repo's own `build_model_and_tokenizer(...)` path and the local `.pt` checkpoint format, with optional `ema_model` loading for eval.
-- The first implementation is intentionally narrow:
-  - supports only `loglikelihood`-based tasks;
-  - `generate_until` and `loglikelihood_rolling` are not implemented.
-
-## 2026-04-01-00:20 : Enable `batch_size>1` for lm-eval loglikelihood bridge
-- `eval/lm_eval_model.py` now supports batched loglikelihood scoring (padding + attention_mask + per-sample continuation masks) for `batch_size>1`.
-- The bridge still intentionally remains loglikelihood-only for now: `generate_until` and `loglikelihood_rolling` are still not implemented.
-
-## 2026-04-01-00:45 : Add batched `generate_until` support to lm-eval bridge
-- `eval/lm_eval_model.py` now implements `generate_until(...)` with multi-batch generation.
-- Requests are normalized from lm-eval `Instance.args`, grouped by generation kwargs (`until`, `max_gen_toks`, sampling settings), then executed in padded batches via `model.generate`.
-- Outputs preserve original request order and apply per-request stop-string truncation (`until`/`stop`) after decoding.
-- `loglikelihood_rolling` is still not implemented.
+## 2026-04-03-12:30 : `memory_pollution` adds strict `lambada_openai` support
+- `memory_pollution` now supports `task=lambada_openai` in addition to ARC.
+- The LAMBADA task is aligned to lm-eval-harness `lambada_openai` semantics:
+  - `context_text = text.rsplit(" ", 1)[0]`
+  - `target_text = " " + text.rsplit(" ", 1)[1]`
+  - metrics are based on gold continuation logprob and greedy exact match.
+- `memory_pollution/scoring.py` is now the shared continuation scorer for both ARC and `lambada_openai`; task-specific aggregation lives in `memory_pollution/metrics.py`.
