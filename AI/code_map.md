@@ -63,5 +63,19 @@
 - `configs/memory_pollution/lambada_openai_gdn340m_random_tokens.yaml`: example `lambada_openai` memory-pollution eval config for GatedDeltaNet.
 - `configs/memory_pollution/lambada_openai_transformer340m_random_tokens.yaml`: example `lambada_openai` memory-pollution eval config for Transformer.
 
+## Exposure Bias Package (`exposure_bias/`)
+- `exposure_bias/run_eval.py`: standalone entrypoint for batched exposure-bias evaluation on fixed-length FineWeb-Edu chunks.
+- `exposure_bias/config.py`: independent eval config dataclass + YAML validation for the exposure-bias experiment.
+- `exposure_bias/runtime.py`: loads model/tokenizer/checkpoint through the existing FLA loader and records model max length.
+- `exposure_bias/io.py`: output dir construction plus `json/jsonl` writers for exposure-bias runs.
+- `exposure_bias/metrics.py`: aggregates `CE_TF`, `CE_rollout`, exposure-bias gap, and rollout token match rate.
+- `exposure_bias/scoring.py`: batched teacher-forcing CE and batched autoregressive rollout CE computation.
+- `exposure_bias/tasks/fineweb_edu.py`: streams FineWeb-Edu text, tokenizes it, and packs non-overlapping fixed-length chunks.
+- `exposure_bias/runners/fineweb_edu_eval.py`: batched evaluation loop for prefix prefill + greedy rollout under model-generated history.
+
+## Exposure Bias Configs
+- `configs/exposure_bias/fineweb_edu_gdn340m.yaml`: example FineWeb-Edu exposure-bias eval config for GatedDeltaNet.
+- `configs/exposure_bias/fineweb_edu_transformer340m.yaml`: example FineWeb-Edu exposure-bias eval config for Transformer.
+
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

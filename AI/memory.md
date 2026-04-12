@@ -320,3 +320,11 @@
   - `target_text = " " + text.rsplit(" ", 1)[1]`
   - metrics are based on gold continuation logprob and greedy exact match.
 - `memory_pollution/scoring.py` is now the shared continuation scorer for both ARC and `lambada_openai`; task-specific aggregation lives in `memory_pollution/metrics.py`.
+
+## 2026-04-12-12:00 : Standalone `exposure_bias` eval package
+- Exposure-bias evaluation lives in a new top-level `exposure_bias/` package with its own config/entrypoint, instead of extending `eval/config.py`.
+- The first supported task is `fineweb_edu`, using fixed-length chunks of `prefix_len + rollout_len` tokens from a tokenized FineWeb-Edu stream.
+- The experiment computes two batched metrics per sample:
+  - `CE_TF`: teacher-forcing CE on the held-out rollout segment,
+  - `CE_rollout`: CE against the same ground-truth tokens while the model rolls out greedily under its own generated history.
+- `exposure_bias_gap = CE_rollout - CE_TF` is the main aggregate metric; rollout is batched across samples with a shared prefix length and rollout length.
