@@ -66,7 +66,7 @@
 ## Exposure Bias Package (`exposure_bias/`)
 - `exposure_bias/run_eval.py`: thin wrapper entrypoint that dispatches to `exposure_bias/eval/`.
 - `exposure_bias/run_train.py`: thin wrapper entrypoint that dispatches to `exposure_bias/train/`.
-- `exposure_bias/io.py`: shared output dir construction plus `json/jsonl` writers.
+- `exposure_bias/io.py`: shared output dir construction plus `json/jsonl` writers; eval output names are derived from dataset aliases such as `fineweb`, `scifi`, and `harrypotter` instead of the generic `hf_dataset` task name.
 - `exposure_bias/model_loader.py`: thin FLA loader wrapper that applies LoRA only to Linear modules in the last `N` blocks.
 - `exposure_bias/text_data.py`: HF dataset loading (remote repo, local snapshot script, or `load_from_disk` dataset), token streaming, fixed-length chunking, train dataloader, and eval example iteration.
 - `exposure_bias/train/config.py`: independent training config dataclass for HF-dataset LoRA finetuning.
@@ -84,8 +84,12 @@
 - `configs/exposure_bias/fineweb_edu_gdn340m.yaml`: example FineWeb-Edu exposure-bias eval config for GatedDeltaNet.
 - `configs/exposure_bias/fineweb_edu_transformer340m.yaml`: example FineWeb-Edu exposure-bias eval config for Transformer.
 - `configs/exposure_bias/scifi_tv_gdn340m.yaml`: example exposure-bias eval config for `lara-martin/Scifi_TV_Shows`.
+- `configs/exposure_bias/harrypotter_gdn340m.yaml`: example exposure-bias eval config for `WutYee/HarryPotter_books_1to7`.
+- `configs/exposure_bias/harrypotter_transformer340m.yaml`: example Harry Potter exposure-bias eval config for Transformer.
 - `configs/exposure_bias_train/scifi_tv_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
 - `configs/exposure_bias_train/scifi_tv_gdn1p3b_lora_last4.yaml`: example 1.3B standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
+- `configs/exposure_bias_train/harrypotter_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `WutYee/HarryPotter_books_1to7`.
+- `configs/exposure_bias_train/harrypotter_gdn1p3b_lora_last4.yaml`: example 1.3B Harry Potter LoRA finetune config.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

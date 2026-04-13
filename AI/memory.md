@@ -339,3 +339,11 @@
   - LoRA targeted only to Linear modules in the last `N` backbone blocks.
 - HF dataset loading supports both remote dataset repos and local cached dataset snapshots/scripts via `load_dataset(path_or_name, ...)`, so datasets like `lara-martin/Scifi_TV_Shows` can be used without exporting to `.txt`.
 - Within `exposure_bias/`, train-specific modules now live under `exposure_bias/train/` and eval-specific modules under `exposure_bias/eval/`; only shared helpers remain at the package top level.
+
+## 2026-04-13-13:10 : Exposure-bias eval output names use dataset aliases
+- `exposure_bias/io.py` now derives eval output names from dataset aliases instead of the generic `hf_dataset` task name.
+- Current built-in aliases are:
+  - `HuggingFaceFW/fineweb-edu -> fineweb`
+  - `lara-martin/Scifi_TV_Shows -> scifi`
+  - `WutYee/HarryPotter_books_1to7 -> harrypotter`
+- The auto-generated experiment name format is now `{dataset_alias}_{model_slug}_p{prefix_len}_r{rollout_len}`.

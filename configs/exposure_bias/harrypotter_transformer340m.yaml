@@ -1,0 +1,24 @@
+task: hf_dataset
+train_config_path: null
+checkpoint_path: null
+model_impl: fla
+model_name: m-a-p/transformer_340M_baseline
+tokenizer_name: null
+expected_architecture: TransformerForCausalLM
+trust_remote_code: true
+dtype: bf16
+
+dataset_name: WutYee/HarryPotter_books_1to7
+dataset_config: null
+dataset_split: test
+dataset_text_field: text
+local_dataset_path: null
+
+prefix_len: 128
+rollout_len: 128
+max_samples: 100
+batch_size: 8
+rollout_policy: greedy
+
+output_dir: outputs
+run_name: null

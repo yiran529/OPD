@@ -7,6 +7,7 @@ from exposure_bias.io import (
     build_experiment_name,
     build_output_dir,
     checkpoint_tag_from_path,
+    dataset_tag_from_source,
     write_json,
     write_jsonl,
 )
@@ -24,11 +25,16 @@ def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
+    dataset_tag = dataset_tag_from_source(
+        dataset_name=cfg.dataset_name,
+        local_dataset_path=cfg.local_dataset_path,
+    )
 
     if cfg.task != "hf_dataset":
         raise ValueError(f"Unsupported task: {cfg.task}")
     predictions, metrics = run_hf_dataset_eval(cfg=cfg, runtime=runtime)
     experiment_name = cfg.run_name or build_experiment_name(
+        dataset_tag=dataset_tag,
         model_name=runtime.train_cfg.model_name,
         prefix_len=cfg.prefix_len,
         rollout_len=cfg.rollout_len,
@@ -36,7 +42,7 @@ def main() -> None:
     output_dir = build_output_dir(
         output_dir=cfg.output_dir,
         experiment_name=experiment_name,
-        task=cfg.task,
+        dataset_tag=dataset_tag,
         checkpoint_tag=checkpoint_tag_from_path(cfg.checkpoint_path),
     )
 
@@ -48,7 +54,7 @@ def main() -> None:
     write_jsonl(output_dir / "predictions.jsonl", predictions)
 
     print(
-        f"Exposure bias eval done: task={cfg.task} split={cfg.dataset_split} "
+        f"Exposure bias eval done: dataset={dataset_tag} split={cfg.dataset_split} "
         f"mean_ce_tf={metrics['mean_ce_tf']:.4f} "
         f"mean_ce_rollout={metrics['mean_ce_rollout']:.4f} "
         f"mean_gap={metrics['mean_exposure_bias_gap']:.4f} "
