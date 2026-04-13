@@ -1,10 +1,10 @@
 task: hf_dataset
 train_config_path: null
-checkpoint_path: null
+checkpoint_path: outputs/scifi-tv-transformer1p3b-lora-last4/checkpoints/step_00001380.pt
 model_impl: fla
-model_name: m-a-p/340M-20B-GatedDeltaNet-pure-baseline
+model_name: m-a-p/transformer_1.3B_baseline
 tokenizer_name: null
-expected_architecture: GatedDeltaNetForCausalLM
+expected_architecture: TransformerForCausalLM
 trust_remote_code: true
 dtype: bf16
 
@@ -12,7 +12,7 @@ dataset_name: lara-martin/Scifi_TV_Shows
 dataset_config: null
 dataset_split: test
 dataset_text_field: sent
-local_dataset_path: null
+local_dataset_path: /data/wyr/.hf-cache/hub/datasets--lara-martin--Scifi_TV_Shows/snapshots/025f445e318a00406362710c57217bbef69aec6f
 
 prefix_len: 128
 rollout_len: 128
