@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 from typing import Iterable
 
 import torch
 from datasets import Dataset, DatasetDict, IterableDataset, load_dataset, load_from_disk
 from torch.utils.data import DataLoader, Dataset as TorchDataset
+
+
+_SCIFI_TV_FIELD_NAMES = (
+    "story_num",
+    "story_line",
+    "event",
+    "gen_event",
+    "sent",
+    "gen_sent",
+    "entities",
+)
+
+_SCIFI_TV_SPLIT_FILENAMES = {
+    "train": ("scifi-train.txt",),
+    "validation": ("scifi-val.txt", "scifi-valid.txt", "scifi-validation.txt"),
+    "test": ("scifi-test.txt",),
+}
 
 
 def _to_split_dataset(
@@ -17,6 +35,57 @@ def _to_split_dataset(
     if split not in dataset_obj:
         raise KeyError(f"Split {split} not found in local dataset; available={list(dataset_obj.keys())}")
     return dataset_obj[split]
+
+
+def _find_scifi_tv_zip(local_path: Path) -> Path | None:
+    if local_path.is_file() and local_path.suffix == ".zip":
+        return local_path
+    if not local_path.is_dir():
+        return None
+
+    direct_zip = local_path / "scifiTVshows.zip"
+    if direct_zip.exists():
+        return direct_zip
+
+    zip_candidates = sorted(local_path.glob("*.zip"))
+    if len(zip_candidates) == 1:
+        return zip_candidates[0]
+    return None
+
+
+def _load_scifi_tv_rows_from_zip(
+    zip_path: Path,
+    split: str,
+) -> list[dict]:
+    assert split in _SCIFI_TV_SPLIT_FILENAMES, f"unsupported Scifi_TV_Shows split: {split}"
+
+    with zipfile.ZipFile(zip_path) as zf:
+        names = {Path(name).name: name for name in zf.namelist() if not name.endswith("/")}
+        target_member = None
+        for filename in _SCIFI_TV_SPLIT_FILENAMES[split]:
+            if filename in names:
+                target_member = names[filename]
+                break
+        assert target_member is not None, (
+            f"missing split file in {zip_path}: split={split} candidates={_SCIFI_TV_SPLIT_FILENAMES[split]}"
+        )
+
+        rows: list[dict] = []
+        with zf.open(target_member) as handle:
+            for line_idx, raw_line in enumerate(handle, start=1):
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+
+                parts = [part.strip() for part in line.split("|||")]
+                assert len(parts) == len(_SCIFI_TV_FIELD_NAMES), (
+                    f"unexpected Scifi_TV_Shows column count at line {line_idx}: "
+                    f"expected={len(_SCIFI_TV_FIELD_NAMES)} actual={len(parts)}"
+                )
+                rows.append(dict(zip(_SCIFI_TV_FIELD_NAMES, parts)))
+
+    assert rows, f"no rows loaded from {zip_path} split={split}"
+    return rows
 
 
 def load_hf_text_dataset(
@@ -41,6 +110,10 @@ def load_hf_text_dataset(
             if dataset_obj is not None:
                 return _to_split_dataset(dataset_obj=dataset_obj, split=dataset_split)
 
+        scifi_tv_zip = _find_scifi_tv_zip(local_path)
+        if scifi_tv_zip is not None:
+            return _load_scifi_tv_rows_from_zip(zip_path=scifi_tv_zip, split=dataset_split)
+
         if dataset_config:
             return load_dataset(
                 str(local_path),
@@ -61,11 +134,19 @@ def load_hf_text_dataset(
             split=dataset_split,
             streaming=streaming,
         )
-    return load_dataset(
-        dataset_name,
-        split=dataset_split,
-        streaming=streaming,
-    )
+    try:
+        return load_dataset(
+            dataset_name,
+            split=dataset_split,
+            streaming=streaming,
+        )
+    except RuntimeError as exc:
+        if dataset_name != "lara-martin/Scifi_TV_Shows":
+            raise
+        raise RuntimeError(
+            "Scifi_TV_Shows uses a deprecated dataset script in the current datasets package. "
+            "Set local_dataset_path to a local snapshot containing scifiTVshows.zip."
+        ) from exc
 
 
 def _load_token_stream(

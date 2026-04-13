@@ -58,6 +58,43 @@ class ExposureBiasTrainConfig:
         return asdict(self)
 
 
+_INT_FIELDS = {
+    "seed",
+    "sequence_length",
+    "lora_r",
+    "lora_alpha",
+    "lora_last_n_blocks",
+    "micro_batch_size",
+    "grad_accum_steps",
+    "num_epochs",
+    "warmup_steps",
+    "log_interval",
+    "save_every_n_epochs",
+    "keep_last_k_checkpoints",
+}
+
+_FLOAT_FIELDS = {
+    "learning_rate",
+    "weight_decay",
+    "adam_beta1",
+    "adam_beta2",
+    "adam_eps",
+    "max_grad_norm",
+    "lora_dropout",
+}
+
+
+def _coerce_scalar_fields(raw: Dict[str, Any]) -> Dict[str, Any]:
+    coerced = dict(raw)
+    for key in _INT_FIELDS:
+        if key in coerced and isinstance(coerced[key], str):
+            coerced[key] = int(coerced[key])
+    for key in _FLOAT_FIELDS:
+        if key in coerced and isinstance(coerced[key], str):
+            coerced[key] = float(coerced[key])
+    return coerced
+
+
 def _validate_config_values(cfg: ExposureBiasTrainConfig) -> None:
     if cfg.dtype not in {"bf16", "fp16", "fp32"}:
         raise ValueError(f"Unsupported dtype: {cfg.dtype}")
@@ -110,6 +147,7 @@ def load_config(path: str) -> ExposureBiasTrainConfig:
         raw = {}
     if not isinstance(raw, dict):
         raise TypeError("Config root must be a mapping")
+    raw = _coerce_scalar_fields(raw)
 
     known_fields = {field.name for field in fields(ExposureBiasTrainConfig)}
     unknown = sorted(set(raw.keys()) - known_fields)
