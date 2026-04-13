@@ -1,4 +1,4 @@
-task: hf_dataset
+task: fineweb_edu
 train_config_path: null
 checkpoint_path: null
 model_impl: fla
@@ -8,16 +8,16 @@ expected_architecture: TransformerForCausalLM
 trust_remote_code: true
 dtype: bf16
 
-dataset_name: HuggingFaceFW/fineweb-edu
-dataset_config: sample-10BT
+dataset_name: /data/wyr/datasets/fineweb-edu-100b
+dataset_config: default
 dataset_split: train
 dataset_text_field: text
 local_dataset_path: null
 
-prefix_len: 128
-rollout_len: 16
-max_samples: 100
-batch_size: 8
+prefix_len: 32
+rollout_len: 10
+max_samples: 500
+batch_size: 32
 rollout_policy: greedy
 
 output_dir: outputs

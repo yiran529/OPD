@@ -14,10 +14,10 @@ dataset_split: test
 dataset_text_field: sent
 local_dataset_path: /data/wyr/.hf-cache/hub/datasets--lara-martin--Scifi_TV_Shows/snapshots/025f445e318a00406362710c57217bbef69aec6f
 
-prefix_len: 128
-rollout_len: 128
-max_samples: 100
-batch_size: 8
+prefix_len: 256
+rollout_len: 32
+max_samples: 500
+batch_size: 128
 rollout_policy: greedy
 
 output_dir: outputs
