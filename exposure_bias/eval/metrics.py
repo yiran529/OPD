@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from exposure_bias.config import ExposureBiasEvalConfig
+from exposure_bias.eval.config import ExposureBiasEvalConfig
 
 
 def _mean(values: list[float]) -> float:

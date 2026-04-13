@@ -11,7 +11,7 @@ from opd.config import TrainConfig, load_config as load_train_config
 
 @dataclass
 class ExposureBiasEvalConfig:
-    task: str = "fineweb_edu"
+    task: str = "hf_dataset"
     train_config_path: Optional[str] = None
     checkpoint_path: Optional[str] = None
     model_impl: str = "fla"
@@ -49,7 +49,7 @@ def _has_inline_model_config(cfg: ExposureBiasEvalConfig) -> bool:
 
 
 def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
-    if cfg.task != "fineweb_edu":
+    if cfg.task != "hf_dataset":
         raise ValueError(f"Unsupported task: {cfg.task}")
     if cfg.model_impl != "fla":
         raise ValueError(f"Unsupported model_impl: {cfg.model_impl}")
@@ -63,8 +63,8 @@ def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
             raise ValueError("model_name must be set when using inline model config")
         if not cfg.expected_architecture:
             raise ValueError("expected_architecture must be set when using inline model config")
-    if not cfg.dataset_name:
-        raise ValueError("dataset_name must be non-empty")
+    if not cfg.dataset_name and not cfg.local_dataset_path:
+        raise ValueError("Either dataset_name or local_dataset_path must be set")
     if not cfg.dataset_split:
         raise ValueError("dataset_split must be non-empty")
     if not cfg.dataset_text_field:
@@ -79,6 +79,8 @@ def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
         raise ValueError("batch_size must be positive")
     if cfg.rollout_policy != "greedy":
         raise ValueError(f"Unsupported rollout_policy: {cfg.rollout_policy}")
+    if cfg.local_dataset_path and not Path(cfg.local_dataset_path).exists():
+        raise FileNotFoundError(f"local_dataset_path not found: {cfg.local_dataset_path}")
 
 
 def resolve_train_config(cfg: ExposureBiasEvalConfig) -> TrainConfig:

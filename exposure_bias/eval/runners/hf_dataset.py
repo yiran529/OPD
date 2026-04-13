@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import torch
 
-from exposure_bias.config import ExposureBiasEvalConfig
-from exposure_bias.metrics import compute_exposure_bias_metrics
-from exposure_bias.runtime import RuntimeBundle
-from exposure_bias.scoring import compute_rollout_ce_batch, compute_teacher_forcing_ce_batch
-from exposure_bias.tasks.fineweb_edu import iter_fineweb_edu_examples
+from exposure_bias.eval.config import ExposureBiasEvalConfig
+from exposure_bias.eval.metrics import compute_exposure_bias_metrics
+from exposure_bias.eval.runtime import RuntimeBundle
+from exposure_bias.eval.scoring import compute_rollout_ce_batch, compute_teacher_forcing_ce_batch
+from exposure_bias.eval.tasks.hf_dataset import iter_hf_text_examples
 
 
 def _iter_example_batches(
@@ -14,7 +14,7 @@ def _iter_example_batches(
     tokenizer,
 ):
     batch: list[dict] = []
-    for example in iter_fineweb_edu_examples(cfg=cfg, tokenizer=tokenizer):
+    for example in iter_hf_text_examples(cfg=cfg, tokenizer=tokenizer):
         batch.append(example)
         if len(batch) == cfg.batch_size:
             yield batch
@@ -23,7 +23,7 @@ def _iter_example_batches(
         yield batch
 
 
-def run_fineweb_edu_eval(
+def run_hf_dataset_eval(
     cfg: ExposureBiasEvalConfig,
     runtime: RuntimeBundle,
 ) -> tuple[list[dict], dict]:
@@ -42,8 +42,6 @@ def run_fineweb_edu_eval(
             dtype=torch.long,
             device=runtime.device,
         )
-        assert batch_ids.shape[1] == seq_len, "batch token length mismatch"
-
         prefix_ids = batch_ids[:, : cfg.prefix_len]
         target_ids = batch_ids[:, cfg.prefix_len :]
 
@@ -62,7 +60,6 @@ def run_fineweb_edu_eval(
             rollout_policy=cfg.rollout_policy,
         )
 
-        # ---- materialize per-sample outputs ----
         for batch_idx, example in enumerate(example_batch):
             generated_ids = rollout_scores["generated_ids"][batch_idx].tolist()
             target_list = target_ids[batch_idx].tolist()

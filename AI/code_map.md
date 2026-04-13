@@ -64,18 +64,28 @@
 - `configs/memory_pollution/lambada_openai_transformer340m_random_tokens.yaml`: example `lambada_openai` memory-pollution eval config for Transformer.
 
 ## Exposure Bias Package (`exposure_bias/`)
-- `exposure_bias/run_eval.py`: standalone entrypoint for batched exposure-bias evaluation on fixed-length FineWeb-Edu chunks.
-- `exposure_bias/config.py`: independent eval config dataclass + YAML validation for the exposure-bias experiment.
-- `exposure_bias/runtime.py`: loads model/tokenizer/checkpoint through the existing FLA loader and records model max length.
-- `exposure_bias/io.py`: output dir construction plus `json/jsonl` writers for exposure-bias runs.
-- `exposure_bias/metrics.py`: aggregates `CE_TF`, `CE_rollout`, exposure-bias gap, and rollout token match rate.
-- `exposure_bias/scoring.py`: batched teacher-forcing CE and batched autoregressive rollout CE computation.
-- `exposure_bias/tasks/fineweb_edu.py`: streams FineWeb-Edu text, tokenizes it, and packs non-overlapping fixed-length chunks.
-- `exposure_bias/runners/fineweb_edu_eval.py`: batched evaluation loop for prefix prefill + greedy rollout under model-generated history.
+- `exposure_bias/run_eval.py`: thin wrapper entrypoint that dispatches to `exposure_bias/eval/`.
+- `exposure_bias/run_train.py`: thin wrapper entrypoint that dispatches to `exposure_bias/train/`.
+- `exposure_bias/io.py`: shared output dir construction plus `json/jsonl` writers.
+- `exposure_bias/model_loader.py`: thin FLA loader wrapper that applies LoRA only to Linear modules in the last `N` blocks.
+- `exposure_bias/text_data.py`: HF dataset loading (remote repo, local snapshot script, or `load_from_disk` dataset), token streaming, fixed-length chunking, train dataloader, and eval example iteration.
+- `exposure_bias/train/config.py`: independent training config dataclass for HF-dataset LoRA finetuning.
+- `exposure_bias/train/runtime.py`: loads model/tokenizer and optional init checkpoint for standalone exposure-bias finetuning.
+- `exposure_bias/train/checkpoint.py`: lightweight model checkpoint saver for exposure-bias finetuning.
+- `exposure_bias/train/loop.py`: minimal next-token CE training loop (single-process, no OPD logic).
+- `exposure_bias/eval/config.py`: independent eval config dataclass + YAML validation for HF-text exposure-bias experiments.
+- `exposure_bias/eval/runtime.py`: loads model/tokenizer/checkpoint through the existing FLA loader and records model max length.
+- `exposure_bias/eval/metrics.py`: aggregates `CE_TF`, `CE_rollout`, exposure-bias gap, and rollout token match rate.
+- `exposure_bias/eval/scoring.py`: batched teacher-forcing CE and batched autoregressive rollout CE computation.
+- `exposure_bias/eval/tasks/hf_dataset.py`: HF-text eval samples from a dataset repo or local snapshot using the configured text field.
+- `exposure_bias/eval/runners/hf_dataset.py`: batched exposure-bias eval loop for HF text datasets.
 
 ## Exposure Bias Configs
 - `configs/exposure_bias/fineweb_edu_gdn340m.yaml`: example FineWeb-Edu exposure-bias eval config for GatedDeltaNet.
 - `configs/exposure_bias/fineweb_edu_transformer340m.yaml`: example FineWeb-Edu exposure-bias eval config for Transformer.
+- `configs/exposure_bias/scifi_tv_gdn340m.yaml`: example exposure-bias eval config for `lara-martin/Scifi_TV_Shows`.
+- `configs/exposure_bias_train/scifi_tv_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
+- `configs/exposure_bias_train/scifi_tv_gdn1p3b_lora_last4.yaml`: example 1.3B standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

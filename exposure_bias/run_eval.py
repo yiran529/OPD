@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from exposure_bias.config import load_config
+from exposure_bias.eval.config import load_config
 from exposure_bias.io import (
     build_experiment_name,
     build_output_dir,
@@ -10,8 +10,8 @@ from exposure_bias.io import (
     write_json,
     write_jsonl,
 )
-from exposure_bias.runners.fineweb_edu_eval import run_fineweb_edu_eval
-from exposure_bias.runtime import build_runtime
+from exposure_bias.eval.runners.hf_dataset import run_hf_dataset_eval
+from exposure_bias.eval.runtime import build_runtime
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,10 +25,9 @@ def main() -> None:
     cfg = load_config(args.config)
     runtime = build_runtime(cfg)
 
-    if cfg.task != "fineweb_edu":
+    if cfg.task != "hf_dataset":
         raise ValueError(f"Unsupported task: {cfg.task}")
-
-    predictions, metrics = run_fineweb_edu_eval(cfg=cfg, runtime=runtime)
+    predictions, metrics = run_hf_dataset_eval(cfg=cfg, runtime=runtime)
     experiment_name = cfg.run_name or build_experiment_name(
         model_name=runtime.train_cfg.model_name,
         prefix_len=cfg.prefix_len,

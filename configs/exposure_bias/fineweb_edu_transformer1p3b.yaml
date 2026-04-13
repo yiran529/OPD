@@ -1,4 +1,4 @@
-task: fineweb_edu
+task: hf_dataset
 train_config_path: null
 checkpoint_path: null
 model_impl: fla
@@ -8,7 +8,7 @@ expected_architecture: TransformerForCausalLM
 trust_remote_code: true
 dtype: bf16
 
-dataset_name: /data/wyr/datasets/fineweb-edu-100b
+dataset_name: HuggingFaceFW/fineweb-edu
 dataset_config: sample-10BT
 dataset_split: train
 dataset_text_field: text

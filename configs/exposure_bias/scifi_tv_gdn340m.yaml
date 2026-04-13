@@ -8,10 +8,10 @@ expected_architecture: GatedDeltaNetForCausalLM
 trust_remote_code: true
 dtype: bf16
 
-dataset_name: HuggingFaceFW/fineweb-edu
-dataset_config: sample-10BT
-dataset_split: train
-dataset_text_field: text
+dataset_name: lara-martin/Scifi_TV_Shows
+dataset_config: null
+dataset_split: test
+dataset_text_field: sent
 local_dataset_path: null
 
 prefix_len: 128

@@ -6,7 +6,7 @@ from typing import Any
 import torch
 
 from eval.checkpoint_loader import load_model_checkpoint
-from exposure_bias.config import ExposureBiasEvalConfig, resolve_train_config
+from exposure_bias.eval.config import ExposureBiasEvalConfig, resolve_train_config
 from opd.config import TrainConfig
 from opd.model_loader import build_model_and_tokenizer
 

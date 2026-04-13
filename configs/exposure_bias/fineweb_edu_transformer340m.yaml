@@ -1,4 +1,4 @@
-task: fineweb_edu
+task: hf_dataset
 train_config_path: null
 checkpoint_path: null
 model_impl: fla

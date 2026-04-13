@@ -323,8 +323,19 @@
 
 ## 2026-04-12-12:00 : Standalone `exposure_bias` eval package
 - Exposure-bias evaluation lives in a new top-level `exposure_bias/` package with its own config/entrypoint, instead of extending `eval/config.py`.
-- The first supported task is `fineweb_edu`, using fixed-length chunks of `prefix_len + rollout_len` tokens from a tokenized FineWeb-Edu stream.
+- The eval path now supports `task=hf_dataset`, using fixed-length chunks of `prefix_len + rollout_len` tokens from a tokenized HF dataset text field.
 - The experiment computes two batched metrics per sample:
   - `CE_TF`: teacher-forcing CE on the held-out rollout segment,
   - `CE_rollout`: CE against the same ground-truth tokens while the model rolls out greedily under its own generated history.
 - `exposure_bias_gap = CE_rollout - CE_TF` is the main aggregate metric; rollout is batched across samples with a shared prefix length and rollout length.
+
+## 2026-04-13-12:30 : Standalone `exposure_bias` local-text finetuning path
+- Domain finetuning for exposure-bias experiments now lives under `exposure_bias/` instead of reusing `train.py` / `opd/train_loop.py`.
+- First version is intentionally minimal:
+  - HF dataset input only,
+  - next-token CE finetuning only,
+  - single-process only,
+  - optional model-only checkpoint initialization,
+  - LoRA targeted only to Linear modules in the last `N` backbone blocks.
+- HF dataset loading supports both remote dataset repos and local cached dataset snapshots/scripts via `load_dataset(path_or_name, ...)`, so datasets like `lara-martin/Scifi_TV_Shows` can be used without exporting to `.txt`.
+- Within `exposure_bias/`, train-specific modules now live under `exposure_bias/train/` and eval-specific modules under `exposure_bias/eval/`; only shared helpers remain at the package top level.
