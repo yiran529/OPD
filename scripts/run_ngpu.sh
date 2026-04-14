@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nproc_per_node=2 train.py --config configs/gdn_340m_opd.yaml
+CUDA_VISIBLE_DEVICES=6,7 uv run torchrun --standalone --nproc_per_node=2 train.py --config configs/gdn_340m_opd.yaml

@@ -1,0 +1,1 @@
+python3 -m eval.run_infer --config ./configs/eval/infer_text.yaml
