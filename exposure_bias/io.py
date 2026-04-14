@@ -10,6 +10,8 @@ _DATASET_ALIAS_OVERRIDES = {
     "HuggingFaceFW/fineweb-edu": "fineweb",
     "lara-martin/Scifi_TV_Shows": "scifi",
     "WutYee/HarryPotter_books_1to7": "harrypotter",
+    "gsm8k": "gsm8k",
+    "openai/gsm8k": "gsm8k",
 }
 
 

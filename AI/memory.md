@@ -347,3 +347,20 @@
   - `lara-martin/Scifi_TV_Shows -> scifi`
   - `WutYee/HarryPotter_books_1to7 -> harrypotter`
 - The auto-generated experiment name format is now `{dataset_alias}_{model_slug}_p{prefix_len}_r{rollout_len}`.
+
+## 2026-04-14-10:30 : GSM8K support in `exposure_bias`
+- `exposure_bias/train` now supports `task=gsm8k_sft`, which formats each GSM8K example as:
+  - `Question: ...`
+  - `Thoughts:`
+  - `<gold rationale>`
+  - `Final Answer: <gold answer>`
+  and then packs those formatted examples into fixed-length token chunks for CE finetuning.
+- `exposure_bias/eval` now supports `task=gsm8k_thought_reveal`.
+- GSM8K thought-reveal eval uses reveal ratios over heuristic rationale steps:
+  - reveal ratios are config-driven and must include `0.0`,
+  - rationale steps are split first by non-empty lines, then by sentence boundaries if needed,
+  - prompt keeps the revealed gold thought prefix and asks the model to greedily continue the remaining thoughts and final answer.
+- GSM8K metrics are aggregated as:
+  - `Acc(r)` for each reveal ratio,
+  - `Gap_r = Acc(r) - Acc(0.0)` for `r > 0`,
+  and model-vs-model gap deltas are compared via `scripts/compare_gsm8k_thought_reveal.py`.

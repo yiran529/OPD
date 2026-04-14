@@ -69,16 +69,19 @@
 - `exposure_bias/io.py`: shared output dir construction plus `json/jsonl` writers; eval output names are derived from dataset aliases such as `fineweb`, `scifi`, and `harrypotter` instead of the generic `hf_dataset` task name.
 - `exposure_bias/model_loader.py`: thin FLA loader wrapper that applies LoRA only to Linear modules in the last `N` blocks.
 - `exposure_bias/text_data.py`: HF dataset loading (remote repo, local snapshot script, or `load_from_disk` dataset), token streaming, fixed-length chunking, train dataloader, and eval example iteration.
-- `exposure_bias/train/config.py`: independent training config dataclass for HF-dataset LoRA finetuning.
+- `exposure_bias/train/config.py`: independent training config dataclass for HF-dataset LoRA finetuning; supports generic packed-text training (`task=hf_dataset`) and GSM8K SFT formatting (`task=gsm8k_sft`).
 - `exposure_bias/train/runtime.py`: loads model/tokenizer and optional init checkpoint for standalone exposure-bias finetuning.
 - `exposure_bias/train/checkpoint.py`: lightweight model checkpoint saver for exposure-bias finetuning.
 - `exposure_bias/train/loop.py`: minimal next-token CE training loop (single-process, no OPD logic).
-- `exposure_bias/eval/config.py`: independent eval config dataclass + YAML validation for HF-text exposure-bias experiments.
+- `exposure_bias/train/tasks/gsm8k.py`: GSM8K train-split formatting into `Question / Thoughts / Final Answer` SFT text and packed-token dataloader construction.
+- `exposure_bias/eval/config.py`: independent eval config dataclass + YAML validation for HF-text CE-rollout eval and GSM8K thought-prefix reveal eval.
 - `exposure_bias/eval/runtime.py`: loads model/tokenizer/checkpoint through the existing FLA loader and records model max length.
 - `exposure_bias/eval/metrics.py`: aggregates `CE_TF`, `CE_rollout`, exposure-bias gap, and rollout token match rate.
-- `exposure_bias/eval/scoring.py`: batched teacher-forcing CE and batched autoregressive rollout CE computation.
+- `exposure_bias/eval/scoring.py`: batched teacher-forcing CE, batched autoregressive rollout CE, and greedy generation helpers.
 - `exposure_bias/eval/tasks/hf_dataset.py`: HF-text eval samples from a dataset repo or local snapshot using the configured text field.
+- `exposure_bias/eval/tasks/gsm8k.py`: GSM8K rationale/final-answer parsing, thought-step splitting, reveal prompt building, and final-answer normalization.
 - `exposure_bias/eval/runners/hf_dataset.py`: batched exposure-bias eval loop for HF text datasets.
+- `exposure_bias/eval/runners/gsm8k_thought_reveal.py`: GSM8K reveal-ratio eval loop that greedily completes hidden thought suffixes and final answers.
 
 ## Exposure Bias Configs
 - `configs/exposure_bias/fineweb_edu_gdn340m.yaml`: example FineWeb-Edu exposure-bias eval config for GatedDeltaNet.
@@ -86,10 +89,15 @@
 - `configs/exposure_bias/scifi_tv_gdn340m.yaml`: example exposure-bias eval config for `lara-martin/Scifi_TV_Shows`.
 - `configs/exposure_bias/harrypotter_gdn340m.yaml`: example exposure-bias eval config for `WutYee/HarryPotter_books_1to7`.
 - `configs/exposure_bias/harrypotter_transformer340m.yaml`: example Harry Potter exposure-bias eval config for Transformer.
+- `configs/exposure_bias/gsm8k_gdn1p3b.yaml`: GSM8K thought-prefix reveal eval config for 1.3B GatedDeltaNet.
+- `configs/exposure_bias/gsm8k_transformer1p3b.yaml`: GSM8K thought-prefix reveal eval config for 1.3B Transformer.
 - `configs/exposure_bias_train/scifi_tv_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
 - `configs/exposure_bias_train/scifi_tv_gdn1p3b_lora_last4.yaml`: example 1.3B standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
 - `configs/exposure_bias_train/harrypotter_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `WutYee/HarryPotter_books_1to7`.
 - `configs/exposure_bias_train/harrypotter_gdn1p3b_lora_last4.yaml`: example 1.3B Harry Potter LoRA finetune config.
+- `configs/exposure_bias_train/gsm8k_gdn1p3b_lora_last4.yaml`: GSM8K SFT LoRA config for 1.3B GatedDeltaNet.
+- `configs/exposure_bias_train/gsm8k_transformer1p3b_lora_last4.yaml`: GSM8K SFT LoRA config for 1.3B Transformer.
+- `scripts/compare_gsm8k_thought_reveal.py`: compares two GSM8K reveal-eval `metrics.json` files and reports `delta_Gap_25/50/75`.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

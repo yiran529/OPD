@@ -12,6 +12,7 @@ from exposure_bias.io import (
     write_jsonl,
 )
 from exposure_bias.eval.runners.hf_dataset import run_hf_dataset_eval
+from exposure_bias.eval.runners.gsm8k_thought_reveal import run_gsm8k_thought_reveal_eval
 from exposure_bias.eval.runtime import build_runtime
 
 
@@ -30,9 +31,12 @@ def main() -> None:
         local_dataset_path=cfg.local_dataset_path,
     )
 
-    if cfg.task != "hf_dataset":
+    if cfg.task == "hf_dataset":
+        predictions, metrics = run_hf_dataset_eval(cfg=cfg, runtime=runtime)
+    elif cfg.task == "gsm8k_thought_reveal":
+        predictions, metrics = run_gsm8k_thought_reveal_eval(cfg=cfg, runtime=runtime)
+    else:
         raise ValueError(f"Unsupported task: {cfg.task}")
-    predictions, metrics = run_hf_dataset_eval(cfg=cfg, runtime=runtime)
     experiment_name = cfg.run_name or build_experiment_name(
         dataset_tag=dataset_tag,
         model_name=runtime.train_cfg.model_name,
@@ -53,14 +57,25 @@ def main() -> None:
     write_json(output_dir / "metrics.json", metrics)
     write_jsonl(output_dir / "predictions.jsonl", predictions)
 
-    print(
-        f"Exposure bias eval done: dataset={dataset_tag} split={cfg.dataset_split} "
-        f"mean_ce_tf={metrics['mean_ce_tf']:.4f} "
-        f"mean_ce_rollout={metrics['mean_ce_rollout']:.4f} "
-        f"mean_gap={metrics['mean_exposure_bias_gap']:.4f} "
-        f"output_dir={output_dir}",
-        flush=True,
-    )
+    if cfg.task == "hf_dataset":
+        print(
+            f"Exposure bias eval done: dataset={dataset_tag} split={cfg.dataset_split} "
+            f"mean_ce_tf={metrics['mean_ce_tf']:.4f} "
+            f"mean_ce_rollout={metrics['mean_ce_rollout']:.4f} "
+            f"mean_gap={metrics['mean_exposure_bias_gap']:.4f} "
+            f"output_dir={output_dir}",
+            flush=True,
+        )
+    else:
+        print(
+            f"GSM8K thought-reveal eval done: dataset={dataset_tag} split={cfg.dataset_split} "
+            f"acc0={metrics['acc_by_ratio']['0.0']:.4f} "
+            f"acc25={metrics['acc_by_ratio'].get('0.25', float('nan')):.4f} "
+            f"acc50={metrics['acc_by_ratio'].get('0.5', float('nan')):.4f} "
+            f"acc75={metrics['acc_by_ratio'].get('0.75', float('nan')):.4f} "
+            f"output_dir={output_dir}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

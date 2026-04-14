@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -32,6 +32,8 @@ class ExposureBiasEvalConfig:
     max_samples: int = 0
     batch_size: int = 8
     rollout_policy: str = "greedy"
+    reveal_ratios: list[float] = field(default_factory=lambda: [0.0, 0.25, 0.5, 0.75])
+    max_new_tokens: int = 256
 
     output_dir: str = "outputs"
     run_name: Optional[str] = None
@@ -49,7 +51,7 @@ def _has_inline_model_config(cfg: ExposureBiasEvalConfig) -> bool:
 
 
 def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
-    if cfg.task != "hf_dataset":
+    if cfg.task not in {"hf_dataset", "gsm8k_thought_reveal"}:
         raise ValueError(f"Unsupported task: {cfg.task}")
     if cfg.model_impl != "fla":
         raise ValueError(f"Unsupported model_impl: {cfg.model_impl}")
@@ -79,6 +81,15 @@ def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
         raise ValueError("batch_size must be positive")
     if cfg.rollout_policy != "greedy":
         raise ValueError(f"Unsupported rollout_policy: {cfg.rollout_policy}")
+    if cfg.max_new_tokens <= 0:
+        raise ValueError("max_new_tokens must be positive")
+    if not cfg.reveal_ratios:
+        raise ValueError("reveal_ratios must be non-empty")
+    for ratio in cfg.reveal_ratios:
+        if not 0.0 <= ratio <= 1.0:
+            raise ValueError(f"reveal ratio must be in [0,1]: {ratio}")
+    if cfg.task == "gsm8k_thought_reveal" and 0.0 not in cfg.reveal_ratios:
+        raise ValueError("gsm8k_thought_reveal requires reveal_ratios to include 0.0")
     if cfg.local_dataset_path and not Path(cfg.local_dataset_path).exists():
         raise FileNotFoundError(f"local_dataset_path not found: {cfg.local_dataset_path}")
 

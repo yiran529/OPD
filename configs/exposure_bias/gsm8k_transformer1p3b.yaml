@@ -1,0 +1,26 @@
+task: gsm8k_thought_reveal
+train_config_path: null
+checkpoint_path: null
+model_impl: fla
+model_name: m-a-p/transformer_1.3B_baseline
+tokenizer_name: null
+expected_architecture: TransformerForCausalLM
+trust_remote_code: true
+dtype: bf16
+
+dataset_name: gsm8k
+dataset_config: main
+dataset_split: test
+dataset_text_field: text
+local_dataset_path: null
+
+prefix_len: 128
+rollout_len: 128
+max_samples: 0
+batch_size: 16
+rollout_policy: greedy
+reveal_ratios: [0.0, 0.25, 0.5, 0.75]
+max_new_tokens: 256
+
+output_dir: outputs
+run_name: null

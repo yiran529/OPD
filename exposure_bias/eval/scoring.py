@@ -140,3 +140,47 @@ def compute_rollout_ce_batch(
         "generated_ids": generated_ids,
         "token_match_rate": token_match_rate,
     }
+
+
+@torch.no_grad()
+def generate_greedy_batch(
+    model: torch.nn.Module,
+    tokenizer,
+    device: torch.device,
+    prompts: list[str],
+    max_new_tokens: int,
+) -> dict:
+    assert prompts, "prompts must be non-empty"
+    assert max_new_tokens > 0, "max_new_tokens must be positive"
+
+    encoded = tokenizer(
+        prompts,
+        padding=True,
+        return_tensors="pt",
+        add_special_tokens=False,
+    )
+    input_ids = encoded["input_ids"].to(device)
+    attention_mask = encoded["attention_mask"].to(device)
+    prompt_lengths = attention_mask.sum(dim=1).tolist()
+
+    with _autocast_context(device):
+        generated = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            do_sample=False,
+            max_new_tokens=max_new_tokens,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+    continuations: list[list[int]] = []
+    for row_idx, _prompt_len in enumerate(prompt_lengths):
+        generated_row = generated[row_idx]
+        continuation_ids = generated_row[input_ids.size(1) :].tolist()
+        continuations.append(continuation_ids)
+
+    return {
+        "generated_ids": generated,
+        "continuation_ids": continuations,
+        "prompt_lengths": prompt_lengths,
+    }

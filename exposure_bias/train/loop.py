@@ -13,6 +13,7 @@ from transformers import get_cosine_schedule_with_warmup
 from exposure_bias.train.checkpoint import save_checkpoint
 from exposure_bias.text_data import build_train_dataloader
 from exposure_bias.train.config import ExposureBiasTrainConfig
+from exposure_bias.train.tasks.gsm8k import build_gsm8k_train_dataloader
 
 
 def _seed_all(seed: int) -> None:
@@ -84,17 +85,31 @@ def run_training(
         encoding="utf-8",
     )
 
-    dataloader = build_train_dataloader(
-        dataset_name=cfg.dataset_name,
-        dataset_config=cfg.dataset_config,
-        dataset_split=cfg.dataset_split,
-        dataset_text_field=cfg.dataset_text_field,
-        local_dataset_path=cfg.local_dataset_path,
-        tokenizer=tokenizer,
-        chunk_len=cfg.sequence_plus_one,
-        batch_size=cfg.micro_batch_size,
-        shuffle=cfg.shuffle,
-    )
+    if cfg.task == "hf_dataset":
+        dataloader = build_train_dataloader(
+            dataset_name=cfg.dataset_name,
+            dataset_config=cfg.dataset_config,
+            dataset_split=cfg.dataset_split,
+            dataset_text_field=cfg.dataset_text_field,
+            local_dataset_path=cfg.local_dataset_path,
+            tokenizer=tokenizer,
+            chunk_len=cfg.sequence_plus_one,
+            batch_size=cfg.micro_batch_size,
+            shuffle=cfg.shuffle,
+        )
+    elif cfg.task == "gsm8k_sft":
+        dataloader = build_gsm8k_train_dataloader(
+            dataset_name=cfg.dataset_name,
+            dataset_config=cfg.dataset_config,
+            dataset_split=cfg.dataset_split,
+            local_dataset_path=cfg.local_dataset_path,
+            tokenizer=tokenizer,
+            chunk_len=cfg.sequence_plus_one,
+            batch_size=cfg.micro_batch_size,
+            shuffle=cfg.shuffle,
+        )
+    else:
+        raise ValueError(f"Unsupported training task: {cfg.task}")
     num_micro_batches = len(dataloader)
     steps_per_epoch = _optimizer_steps_per_epoch(
         num_micro_batches=num_micro_batches,

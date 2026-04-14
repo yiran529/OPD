@@ -9,6 +9,7 @@ import yaml
 
 @dataclass
 class ExposureBiasTrainConfig:
+    task: str = "hf_dataset"
     run_name: str = "hf-dataset-lora"
     output_dir: str = "outputs"
     seed: int = 42
@@ -96,6 +97,8 @@ def _coerce_scalar_fields(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _validate_config_values(cfg: ExposureBiasTrainConfig) -> None:
+    if cfg.task not in {"hf_dataset", "gsm8k_sft"}:
+        raise ValueError(f"Unsupported task: {cfg.task}")
     if cfg.dtype not in {"bf16", "fp16", "fp32"}:
         raise ValueError(f"Unsupported dtype: {cfg.dtype}")
     if cfg.finetune_mode not in {"full", "lora"}:
