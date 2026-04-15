@@ -59,23 +59,6 @@ def _build_optimizer(
     return optimizer, trainable_params
 
 
-def _unwrap_cache_tree(cache_obj):
-    if cache_obj is None:
-        return None
-    if isinstance(cache_obj, torch.Tensor):
-        return cache_obj.detach()
-    if isinstance(cache_obj, list):
-        return [_unwrap_cache_tree(item) for item in cache_obj]
-    if isinstance(cache_obj, tuple):
-        return tuple(_unwrap_cache_tree(item) for item in cache_obj)
-    if isinstance(cache_obj, dict):
-        return {key: _unwrap_cache_tree(value) for key, value in cache_obj.items()}
-    if hasattr(cache_obj, "to_legacy_cache") and hasattr(cache_obj.__class__, "from_legacy_cache"):
-        detached_legacy = _unwrap_cache_tree(cache_obj.to_legacy_cache())
-        return cache_obj.__class__.from_legacy_cache(detached_legacy)
-    raise TypeError(f"Unsupported cache object type: {type(cache_obj)}")
-
-
 def _tensorize(token_ids: list[int], device: torch.device) -> torch.Tensor:
     if not token_ids:
         raise ValueError("token_ids must be non-empty")
@@ -105,11 +88,7 @@ def _prefill_one_path(
     return logits[:, -1, :], past_key_values
 
 
-def _decode_one_token(
-    model: torch.nn.Module,
-    next_token: torch.Tensor,
-    past_key_values,
-) -> tuple[torch.Tensor, Any]:
+def _decode_one_token(model: torch.nn.Module, next_token: torch.Tensor, past_key_values) -> tuple[torch.Tensor, Any]:
     outputs = model(
         input_ids=next_token,
         past_key_values=past_key_values,
@@ -125,8 +104,88 @@ def _decode_one_token(
     return logits[:, -1, :], next_cache
 
 
+@torch.no_grad()
+def _generate_student_rollout_tokens(
+    rollout_model: torch.nn.Module,
+    prompt_ids: list[int],
+    student_prefix_ids: list[int],
+    rollout_len: int,
+    device: torch.device,
+) -> list[int]:
+    assert rollout_len > 0, "rollout_len must be positive"
+
+    was_training = rollout_model.training
+    rollout_model.eval()
+    try:
+        # ---- prefill rollout cache on the corrupted prefix ----
+        current_logits, cache = _prefill_one_path(
+            model=rollout_model,
+            prompt_ids=prompt_ids,
+            prefix_ids=student_prefix_ids,
+            device=device,
+        )
+
+        # ---- greedily generate a fixed rollout segment ----
+        rollout_tokens: list[int] = []
+        for step_idx in range(rollout_len):
+            next_token = current_logits.argmax(dim=-1, keepdim=True)
+            rollout_tokens.append(int(next_token.item()))
+            if step_idx + 1 == rollout_len:
+                break
+            current_logits, cache = _decode_one_token(
+                model=rollout_model,
+                next_token=next_token,
+                past_key_values=cache,
+            )
+        return rollout_tokens
+    finally:
+        if was_training:
+            rollout_model.train()
+
+
+def _forward_rollout_logits(
+    model: torch.nn.Module,
+    prompt_ids: list[int],
+    prefix_ids: list[int],
+    rollout_tokens: list[int],
+    device: torch.device,
+) -> torch.Tensor:
+    assert rollout_tokens, "rollout_tokens must be non-empty"
+
+    # ---- forward on the fixed rollout sequence ----
+    full_input_ids = _tensorize(prompt_ids + prefix_ids + rollout_tokens, device=device)
+    attention_mask = torch.ones_like(full_input_ids)
+    outputs = model(
+        input_ids=full_input_ids,
+        attention_mask=attention_mask,
+        use_cache=False,
+        return_dict=True,
+    )
+    logits = getattr(outputs, "logits", None)
+    if logits is None:
+        raise RuntimeError("Forward path did not return logits")
+
+    # ---- slice logits that predict the rollout tokens ----
+    prefix_total_len = len(prompt_ids) + len(prefix_ids)
+    rollout_len = len(rollout_tokens)
+    gather_start = prefix_total_len - 1
+    gather_end = gather_start + rollout_len
+    if gather_start < 0:
+        raise RuntimeError(
+            f"Invalid gather_start={gather_start}; prompt+prefix must contain at least one token"
+        )
+    rollout_logits = logits[:, gather_start:gather_end, :]
+    if rollout_logits.size(1) != rollout_len:
+        raise RuntimeError(
+            "Forward-sliced rollout logits have the wrong length: "
+            f"expected={rollout_len} got={rollout_logits.size(1)}"
+        )
+    return rollout_logits
+
+
 def _compute_sample_loss(
     student_model: torch.nn.Module,
+    student_rollout_model: torch.nn.Module,
     teacher_model: torch.nn.Module,
     sample: PreparedMathSample,
     cfg: QwenOPSDTrainConfig,
@@ -142,68 +201,39 @@ def _compute_sample_loss(
         start_max_ratio=cfg.corrupt_start_max_ratio,
     )
 
-    # ---- prefill student and teacher on their respective prefixes ----
-    current_student_logits, student_cache = _prefill_one_path(
+    # ---- first stage: rollout under the student policy ----
+    rollout_tokens = _generate_student_rollout_tokens(
+        rollout_model=student_rollout_model,
+        prompt_ids=sample.prompt_ids,
+        student_prefix_ids=corruption.student_prefix_ids,
+        rollout_len=cfg.rollout_len,
+        device=device,
+    )
+
+    # ---- second stage: fixed-sequence forward on the shared rollout ----
+    student_rollout_logits = _forward_rollout_logits(
         model=student_model,
         prompt_ids=sample.prompt_ids,
         prefix_ids=corruption.student_prefix_ids,
+        rollout_tokens=rollout_tokens,
         device=device,
     )
     with torch.no_grad():
-        current_teacher_logits, teacher_cache = _prefill_one_path(
+        teacher_rollout_logits = _forward_rollout_logits(
             model=teacher_model,
             prompt_ids=sample.prompt_ids,
             prefix_ids=corruption.teacher_prefix_ids,
+            rollout_tokens=rollout_tokens,
             device=device,
         )
 
-    total_sum: torch.Tensor | None = None
-    forward_sum: torch.Tensor | None = None
-    reverse_sum: torch.Tensor | None = None
-
-    # ---- shared student rollout: teacher consumes the same generated history ----
-    for step_idx in range(cfg.rollout_len):
-        step_bundle = mixed_kl_from_logits(
-            student_logits=current_student_logits,
-            teacher_logits=current_teacher_logits,
-            alpha=cfg.alpha,
-        )
-        total_sum = step_bundle.total if total_sum is None else total_sum + step_bundle.total
-        forward_sum = (
-            step_bundle.forward_kl if forward_sum is None else forward_sum + step_bundle.forward_kl
-        )
-        reverse_sum = (
-            step_bundle.reverse_kl if reverse_sum is None else reverse_sum + step_bundle.reverse_kl
-        )
-
-        if step_idx + 1 == cfg.rollout_len:
-            continue
-
-        next_token = current_student_logits.argmax(dim=-1, keepdim=True)
-        current_student_logits, student_cache = _decode_one_token(
-            model=student_model,
-            next_token=next_token,
-            past_key_values=student_cache,
-        )
-        with torch.no_grad():
-            current_teacher_logits, teacher_cache = _decode_one_token(
-                model=teacher_model,
-                next_token=next_token,
-                past_key_values=teacher_cache,
-            )
-
-        if cfg.detach_rollout_cache:
-            student_cache = _unwrap_cache_tree(student_cache)
-            teacher_cache = _unwrap_cache_tree(teacher_cache)
-
-    assert total_sum is not None and forward_sum is not None and reverse_sum is not None
-    loss_scale = float(cfg.rollout_len)
+    loss_bundle = mixed_kl_from_logits(
+        student_logits=student_rollout_logits,
+        teacher_logits=teacher_rollout_logits,
+        alpha=cfg.alpha,
+    )
     return (
-        DistillLossBundle(
-            total=total_sum / loss_scale,
-            forward_kl=forward_sum / loss_scale,
-            reverse_kl=reverse_sum / loss_scale,
-        ),
+        loss_bundle,
         {
             "prompt_len": len(sample.prompt_ids),
             "solution_len": len(sample.solution_ids),
@@ -394,6 +424,7 @@ def run_training(
                 for sample in batch_samples:
                     sample_bundle, sample_meta = _compute_sample_loss(
                         student_model=student_model,
+                        student_rollout_model=raw_student_model,
                         teacher_model=teacher_model,
                         sample=sample,
                         cfg=cfg,

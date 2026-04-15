@@ -421,3 +421,13 @@
   - prefill teacher on the patched prefix,
   - compute mixed KL on current logits,
   - advance both paths with the same greedy student token.
+
+## 2026-04-15-20:30 : QwenOPSD training switched to two-stage rollout-then-forward
+- QwenOPSD no longer computes KD loss inside the same stepwise decode loop used to generate rollout tokens.
+- New training structure:
+  - first run a no-grad greedy student rollout on the corrupted prefix,
+  - then run one full student forward on `prompt + student_prefix + rollout_tokens`,
+  - and one full teacher forward on `prompt + teacher_prefix + rollout_tokens`,
+  - then slice rollout-position logits and compute mixed KL on the fixed shared rollout.
+- Rollout still uses the local HF/Transformers model only; no vLLM integration has been added yet.
+- During rollout generation, the raw student model is temporarily switched to `eval()` so greedy tokens are not polluted by dropout, and then restored to its previous training mode.

@@ -106,7 +106,7 @@
 - `QwenOPSD/train/corruption.py`: multi-span corruption over `solution` tokens; samples `B` non-overlapping spans, builds student-vs-teacher prefixes (teacher gets clean patched spans), and returns rollout-start metadata.
 - `QwenOPSD/train/losses.py`: forward-KL / reverse-KL / mixed-KL loss from full-vocabulary logits.
 - `QwenOPSD/train/runtime.py`: builds student/teacher/tokenizer/device bundle for QwenOPSD training.
-- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop; student and teacher share the same greedy student rollout history, but teacher starts from a patched prefix and student starts from the corrupted prefix; supports single-node DDP student training plus rank-0 wandb logging/checkpointing.
+- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop with two stages: no-grad greedy student rollout first, then full student/teacher forwards on the shared rollout tokens for mixed-KL supervision; supports single-node DDP student training plus rank-0 wandb logging/checkpointing.
 - `QwenOPSD/eval/config.py`: strict YAML config dataclass for QwenOPSD eval.
 - `QwenOPSD/eval/runtime.py`: model/tokenizer/checkpoint builder for eval.
 - `QwenOPSD/eval/runner.py`: placeholder eval runner that creates output layout and writes a placeholder metrics file.
