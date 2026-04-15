@@ -1,0 +1,478 @@
+from __future__ import annotations
+
+import random
+import time
+from contextlib import nullcontext
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+import yaml
+from transformers import get_cosine_schedule_with_warmup
+
+from QwenOPSD.checkpoint import load_training_checkpoint, save_training_checkpoint
+from QwenOPSD.train.config import QwenOPSDTrainConfig
+from QwenOPSD.train.corruption import build_corrupted_prefix
+from QwenOPSD.train.data import PreparedMathSample, build_train_dataloader
+from QwenOPSD.train.losses import DistillLossBundle, mixed_kl_from_logits
+
+
+def _seed_all(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _autocast_context(cfg: QwenOPSDTrainConfig, device: torch.device):
+    if device.type != "cuda":
+        return nullcontext()
+    if cfg.dtype == "bf16":
+        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    if cfg.dtype == "fp16":
+        return torch.autocast(device_type="cuda", dtype=torch.float16)
+    return nullcontext()
+
+
+def _build_optimizer(
+    model: torch.nn.Module,
+    cfg: QwenOPSDTrainConfig,
+) -> tuple[torch.optim.Optimizer, list[torch.nn.Parameter]]:
+    trainable_params = [param for param in model.parameters() if param.requires_grad]
+    assert trainable_params, "no trainable parameters"
+    optimizer = torch.optim.AdamW(
+        trainable_params,
+        lr=cfg.learning_rate,
+        betas=(cfg.adam_beta1, cfg.adam_beta2),
+        eps=cfg.adam_eps,
+        weight_decay=cfg.weight_decay,
+    )
+    return optimizer, trainable_params
+
+
+def _unwrap_cache_tree(cache_obj):
+    if cache_obj is None:
+        return None
+    if isinstance(cache_obj, torch.Tensor):
+        return cache_obj.detach()
+    if isinstance(cache_obj, list):
+        return [_unwrap_cache_tree(item) for item in cache_obj]
+    if isinstance(cache_obj, tuple):
+        return tuple(_unwrap_cache_tree(item) for item in cache_obj)
+    if isinstance(cache_obj, dict):
+        return {key: _unwrap_cache_tree(value) for key, value in cache_obj.items()}
+    if hasattr(cache_obj, "to_legacy_cache") and hasattr(cache_obj.__class__, "from_legacy_cache"):
+        detached_legacy = _unwrap_cache_tree(cache_obj.to_legacy_cache())
+        return cache_obj.__class__.from_legacy_cache(detached_legacy)
+    raise TypeError(f"Unsupported cache object type: {type(cache_obj)}")
+
+
+def _tensorize(token_ids: list[int], device: torch.device) -> torch.Tensor:
+    if not token_ids:
+        raise ValueError("token_ids must be non-empty")
+    return torch.tensor([token_ids], dtype=torch.long, device=device)
+
+
+def _teacher_rollout_logits(
+    teacher_model: torch.nn.Module,
+    prompt_ids: list[int],
+    solution_ids: list[int],
+    rollout_start: int,
+    rollout_len: int,
+    device: torch.device,
+) -> torch.Tensor:
+    rollout_end = rollout_start + rollout_len
+    if rollout_end > len(solution_ids):
+        raise ValueError(
+            f"rollout window exceeds solution length: rollout_end={rollout_end} solution_len={len(solution_ids)}"
+        )
+
+    teacher_input_ids = _tensorize(prompt_ids + solution_ids[:rollout_end], device=device)
+    attention_mask = torch.ones_like(teacher_input_ids)
+    with torch.no_grad():
+        outputs = teacher_model(
+            input_ids=teacher_input_ids,
+            attention_mask=attention_mask,
+            use_cache=False,
+            return_dict=True,
+        )
+    logits = getattr(outputs, "logits", None)
+    if logits is None:
+        raise RuntimeError("Teacher forward did not return logits")
+
+    prompt_len = len(prompt_ids)
+    gather_start = prompt_len + rollout_start - 1
+    gather_end = gather_start + rollout_len
+    if gather_start < 0:
+        raise RuntimeError(
+            f"Invalid gather_start={gather_start}; prompt must contribute at least one token"
+        )
+    gathered_logits = logits[:, gather_start:gather_end, :]
+    if gathered_logits.size(1) != rollout_len:
+        raise RuntimeError(
+            "Teacher gathered rollout logits have the wrong length: "
+            f"expected={rollout_len} got={gathered_logits.size(1)}"
+        )
+    return gathered_logits
+
+
+def _student_prefill(
+    student_model: torch.nn.Module,
+    prompt_ids: list[int],
+    corrupted_prefix_ids: list[int],
+    device: torch.device,
+) -> tuple[torch.Tensor, Any]:
+    input_ids = _tensorize(prompt_ids + corrupted_prefix_ids, device=device)
+    attention_mask = torch.ones_like(input_ids)
+    outputs = student_model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        use_cache=True,
+        return_dict=True,
+    )
+    logits = getattr(outputs, "logits", None)
+    if logits is None:
+        raise RuntimeError("Student prefill did not return logits")
+    past_key_values = getattr(outputs, "past_key_values", None)
+    if past_key_values is None:
+        raise RuntimeError("Student prefill did not return past_key_values")
+    return logits[:, -1, :], past_key_values
+
+
+def _student_decode_one_token(
+    student_model: torch.nn.Module,
+    next_token: torch.Tensor,
+    past_key_values,
+) -> tuple[torch.Tensor, Any]:
+    outputs = student_model(
+        input_ids=next_token,
+        past_key_values=past_key_values,
+        use_cache=True,
+        return_dict=True,
+    )
+    logits = getattr(outputs, "logits", None)
+    if logits is None:
+        raise RuntimeError("Student decode did not return logits")
+    next_cache = getattr(outputs, "past_key_values", None)
+    if next_cache is None:
+        raise RuntimeError("Student decode did not return past_key_values")
+    return logits[:, -1, :], next_cache
+
+
+def _compute_sample_loss(
+    student_model: torch.nn.Module,
+    teacher_model: torch.nn.Module,
+    sample: PreparedMathSample,
+    cfg: QwenOPSDTrainConfig,
+    device: torch.device,
+) -> tuple[DistillLossBundle, dict[str, int]]:
+    # ---- corrupt the gold reasoning prefix ----
+    corruption = build_corrupted_prefix(
+        solution_ids=sample.solution_ids,
+        rollout_len=cfg.rollout_len,
+        span_choices=cfg.corrupt_span_choices,
+        start_min_ratio=cfg.corrupt_start_min_ratio,
+        start_max_ratio=cfg.corrupt_start_max_ratio,
+    )
+
+    # ---- collect teacher logits under the clean reasoning trajectory ----
+    teacher_logits = _teacher_rollout_logits(
+        teacher_model=teacher_model,
+        prompt_ids=sample.prompt_ids,
+        solution_ids=sample.solution_ids,
+        rollout_start=corruption.rollout_start,
+        rollout_len=cfg.rollout_len,
+        device=device,
+    )
+
+    # ---- prefill the student on the corrupted prefix ----
+    current_student_logits, student_cache = _student_prefill(
+        student_model=student_model,
+        prompt_ids=sample.prompt_ids,
+        corrupted_prefix_ids=corruption.corrupted_prefix_ids,
+        device=device,
+    )
+
+    total_sum: torch.Tensor | None = None
+    forward_sum: torch.Tensor | None = None
+    reverse_sum: torch.Tensor | None = None
+
+    # ---- greedy rollout and mixed-KL distillation on rollout positions only ----
+    for step_idx in range(cfg.rollout_len):
+        step_bundle = mixed_kl_from_logits(
+            student_logits=current_student_logits,
+            teacher_logits=teacher_logits[:, step_idx, :],
+            alpha=cfg.alpha,
+        )
+        total_sum = step_bundle.total if total_sum is None else total_sum + step_bundle.total
+        forward_sum = (
+            step_bundle.forward_kl if forward_sum is None else forward_sum + step_bundle.forward_kl
+        )
+        reverse_sum = (
+            step_bundle.reverse_kl if reverse_sum is None else reverse_sum + step_bundle.reverse_kl
+        )
+
+        if step_idx + 1 == cfg.rollout_len:
+            continue
+
+        next_token = current_student_logits.argmax(dim=-1, keepdim=True)
+        current_student_logits, student_cache = _student_decode_one_token(
+            student_model=student_model,
+            next_token=next_token,
+            past_key_values=student_cache,
+        )
+        if cfg.detach_rollout_cache:
+            student_cache = _unwrap_cache_tree(student_cache)
+
+    assert total_sum is not None and forward_sum is not None and reverse_sum is not None
+    loss_scale = float(cfg.rollout_len)
+    return (
+        DistillLossBundle(
+            total=total_sum / loss_scale,
+            forward_kl=forward_sum / loss_scale,
+            reverse_kl=reverse_sum / loss_scale,
+        ),
+        {
+            "prompt_len": len(sample.prompt_ids),
+            "solution_len": len(sample.solution_ids),
+            "rollout_start": corruption.rollout_start,
+            "span_len": corruption.span_len,
+        },
+    )
+
+
+def _optimizer_steps_per_epoch(
+    num_micro_batches: int,
+    grad_accum_steps: int,
+) -> int:
+    assert num_micro_batches > 0, "num_micro_batches must be positive"
+    assert grad_accum_steps > 0, "grad_accum_steps must be positive"
+    return (num_micro_batches + grad_accum_steps - 1) // grad_accum_steps
+
+
+def run_training(
+    cfg: QwenOPSDTrainConfig,
+    student_model: torch.nn.Module,
+    teacher_model: torch.nn.Module,
+    tokenizer,
+    device: torch.device,
+) -> None:
+    _seed_all(cfg.seed)
+
+    run_dir = Path(cfg.output_dir) / cfg.run_name
+    checkpoint_dir = run_dir / "checkpoints"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "resolved_config.yaml").write_text(
+        yaml.safe_dump(cfg.as_dict(), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    dataloader, dataset_stats = build_train_dataloader(cfg=cfg, tokenizer=tokenizer)
+    print(
+        "dataset preparation: "
+        f"seen={dataset_stats.num_rows_seen} "
+        f"kept={dataset_stats.num_rows_kept} "
+        f"skip_missing={dataset_stats.num_rows_skipped_missing_fields} "
+        f"skip_correct={dataset_stats.num_rows_skipped_correct_filter} "
+        f"skip_prompt_len={dataset_stats.num_rows_skipped_prompt_len} "
+        f"skip_solution_len={dataset_stats.num_rows_skipped_solution_len}",
+        flush=True,
+    )
+
+    num_micro_batches = len(dataloader)
+    steps_per_epoch = _optimizer_steps_per_epoch(
+        num_micro_batches=num_micro_batches,
+        grad_accum_steps=cfg.grad_accum_steps,
+    )
+    total_optimizer_steps = cfg.num_epochs * steps_per_epoch
+
+    print(
+        f"num_micro_batches={num_micro_batches} "
+        f"steps_per_epoch={steps_per_epoch} "
+        f"num_epochs={cfg.num_epochs} "
+        f"total_optimizer_steps={total_optimizer_steps}",
+        flush=True,
+    )
+
+    optimizer, trainable_params = _build_optimizer(model=student_model, cfg=cfg)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=cfg.warmup_steps,
+        num_training_steps=total_optimizer_steps,
+    )
+
+    scaler = None
+    if device.type == "cuda" and cfg.dtype == "fp16":
+        scaler = torch.cuda.amp.GradScaler(enabled=True)
+
+    total_params = sum(param.numel() for param in student_model.parameters())
+    trainable_param_count = sum(param.numel() for param in trainable_params)
+    print(
+        "trainable parameter summary: "
+        f"finetune_mode={cfg.finetune_mode} "
+        f"trainable_params={trainable_param_count} "
+        f"total_params={total_params} "
+        f"trainable_ratio={100.0 * trainable_param_count / max(total_params, 1):.4f}%",
+        flush=True,
+    )
+
+    global_step = 0
+    if cfg.resume_path:
+        global_step = load_training_checkpoint(
+            checkpoint_path=cfg.resume_path,
+            model=student_model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            scaler=scaler,
+            device=device,
+        )
+        print(f"resumed training from step={global_step} path={cfg.resume_path}", flush=True)
+
+    student_model.train()
+    teacher_model.eval()
+
+    accum_steps = 0
+    step_time = time.time()
+    running_total = torch.zeros([], device=device)
+    running_forward = torch.zeros([], device=device)
+    running_reverse = torch.zeros([], device=device)
+    running_span = 0
+    running_prompt = 0
+    running_solution = 0
+    running_samples = 0
+
+    for epoch_idx in range(1, cfg.num_epochs + 1):
+        optimizer.zero_grad(set_to_none=True)
+
+        for micro_step, batch_samples in enumerate(dataloader, start=1):
+            if global_step >= total_optimizer_steps:
+                break
+
+            group_start = ((micro_step - 1) // cfg.grad_accum_steps) * cfg.grad_accum_steps + 1
+            accum_target = min(cfg.grad_accum_steps, num_micro_batches - group_start + 1)
+
+            batch_total: torch.Tensor | None = None
+            batch_forward: torch.Tensor | None = None
+            batch_reverse: torch.Tensor | None = None
+            valid_samples = 0
+            batch_span_sum = 0
+            batch_prompt_sum = 0
+            batch_solution_sum = 0
+
+            with _autocast_context(cfg, device):
+                for sample in batch_samples:
+                    sample_bundle, sample_meta = _compute_sample_loss(
+                        student_model=student_model,
+                        teacher_model=teacher_model,
+                        sample=sample,
+                        cfg=cfg,
+                        device=device,
+                    )
+                    batch_total = sample_bundle.total if batch_total is None else batch_total + sample_bundle.total
+                    batch_forward = (
+                        sample_bundle.forward_kl
+                        if batch_forward is None
+                        else batch_forward + sample_bundle.forward_kl
+                    )
+                    batch_reverse = (
+                        sample_bundle.reverse_kl
+                        if batch_reverse is None
+                        else batch_reverse + sample_bundle.reverse_kl
+                    )
+                    valid_samples += 1
+                    batch_span_sum += sample_meta["span_len"]
+                    batch_prompt_sum += sample_meta["prompt_len"]
+                    batch_solution_sum += sample_meta["solution_len"]
+
+            if valid_samples == 0:
+                continue
+
+            batch_total = batch_total / valid_samples
+            batch_forward = batch_forward / valid_samples
+            batch_reverse = batch_reverse / valid_samples
+
+            if not torch.isfinite(batch_total):
+                raise FloatingPointError(
+                    f"Non-finite batch_total encountered at epoch={epoch_idx} micro_step={micro_step}"
+                )
+
+            if scaler is not None:
+                scaler.scale(batch_total / accum_target).backward()
+            else:
+                (batch_total / accum_target).backward()
+
+            running_total += batch_total.detach()
+            running_forward += batch_forward.detach()
+            running_reverse += batch_reverse.detach()
+            running_span += batch_span_sum
+            running_prompt += batch_prompt_sum
+            running_solution += batch_solution_sum
+            running_samples += valid_samples
+            accum_steps += 1
+
+            should_step = accum_steps == cfg.grad_accum_steps or micro_step == num_micro_batches
+            if not should_step:
+                continue
+
+            global_step += 1
+            if scaler is not None:
+                scaler.unscale_(optimizer)
+                grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, cfg.max_grad_norm)
+                optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad(set_to_none=True)
+
+            if global_step % cfg.log_interval == 0 or global_step == 1:
+                elapsed = time.time() - step_time
+                avg_total = running_total.item() / accum_steps
+                avg_forward = running_forward.item() / accum_steps
+                avg_reverse = running_reverse.item() / accum_steps
+                avg_span = running_span / max(running_samples, 1)
+                avg_prompt = running_prompt / max(running_samples, 1)
+                avg_solution = running_solution / max(running_samples, 1)
+                print(
+                    f"epoch={epoch_idx}/{cfg.num_epochs} "
+                    f"step={global_step}/{total_optimizer_steps} "
+                    f"loss_kd={avg_total:.6f} "
+                    f"loss_fwd_kl={avg_forward:.6f} "
+                    f"loss_rev_kl={avg_reverse:.6f} "
+                    f"alpha={cfg.alpha:.3f} "
+                    f"avg_span_len={avg_span:.2f} "
+                    f"avg_prompt_len={avg_prompt:.2f} "
+                    f"avg_solution_len={avg_solution:.2f} "
+                    f"lr={scheduler.get_last_lr()[0]:.6e} "
+                    f"grad_norm={float(grad_norm):.4f} "
+                    f"dt={elapsed:.2f}s",
+                    flush=True,
+                )
+                step_time = time.time()
+
+            if global_step % cfg.save_every_n_steps == 0 or global_step == total_optimizer_steps:
+                checkpoint_path = save_training_checkpoint(
+                    checkpoint_dir=checkpoint_dir,
+                    step=global_step,
+                    model=student_model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler,
+                    config_dict=cfg.as_dict(),
+                    keep_last_k=cfg.keep_last_k_checkpoints,
+                )
+                print(f"saved checkpoint: {checkpoint_path}", flush=True)
+
+            accum_steps = 0
+            running_total = torch.zeros([], device=device)
+            running_forward = torch.zeros([], device=device)
+            running_reverse = torch.zeros([], device=device)
+            running_span = 0
+            running_prompt = 0
+            running_solution = 0
+            running_samples = 0
+
+    student_model.eval()

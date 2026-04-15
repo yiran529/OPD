@@ -144,7 +144,7 @@ Before considering an implementation done, check:
 ## Working Rules
 When implementing a change:
 
-1. read `AI/ideas/1.md`,
+1. read `AI/ideas/x.md`, where x is the largest number in AI/ideas
 2. inspect the relevant code,
 3. make the smallest correct change,m inimize the scope of changes.
     - make the smallest change that correctly implements the idea,

@@ -1,0 +1,24 @@
+run_name: qwen3_0p8b_openthoughts_kd
+output_dir: outputs
+task: corruption_robustness
+
+model_name: Qwen/Qwen3.5-0.8B
+tokenizer_name: null
+model_class: conditional_generation
+trust_remote_code: false
+dtype: bf16
+finetune_mode: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+checkpoint_path: null
+max_samples: 0
+

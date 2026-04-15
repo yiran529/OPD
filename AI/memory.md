@@ -1,4 +1,5 @@
 # Durable Memory
+* note: 务必按照时间顺序写！！！
 
 ## 2026-03-25-11:00 : Initial OPD training scaffold
 - The training pipeline is intentionally explicit and local: `train.py` + `opd/train_loop.py` implement the full loop without framework abstractions.
@@ -368,3 +369,16 @@
   - evaluation uses the full question plus revealed gold thought prefix without token truncation,
   - output naming no longer includes `p{prefix_len}_r{rollout_len}` for GSM8K,
   - runtime fails fast if `prompt_len + max_new_tokens` exceeds the model context length.
+
+## 2026-04-15-18:30 : Add standalone QwenOPSD experiment scaffold
+- Added a separate top-level `QwenOPSD/` package instead of extending `opd/`, because idea-5 uses a different training objective and data shape:
+  - teacher fixed at the initial Qwen checkpoint,
+  - student trained on corrupted `solution` prefixes,
+  - mixed forward/reverse KL only,
+  - `problem/solution` pair data instead of packed raw text.
+- `QwenOPSD` training uses Qwen chat-template formatting for the `problem` prompt (`apply_chat_template(..., add_generation_prompt=True, enable_thinking=True)`), then treats `solution` as the assistant reasoning continuation to corrupt/distill.
+- The first implementation keeps the training loop explicit and sample-wise:
+  - teacher logits are collected from one clean teacher-forcing forward on the gold solution prefix,
+  - student rollout is greedy from the corrupted prefix,
+  - loss is averaged over rollout positions only,
+  - eval exists only as a placeholder scaffold for now.

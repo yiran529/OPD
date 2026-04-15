@@ -1,0 +1,60 @@
+run_name: qwen3_0p8b_openthoughts_kd
+output_dir: outputs
+seed: 42
+
+model_name: Qwen/Qwen3.5-0.8B
+teacher_model_name: null
+tokenizer_name: null
+model_class: conditional_generation
+trust_remote_code: false
+dtype: bf16
+finetune_mode: lora
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+resume_path: null
+
+dataset_name: open-r1/OpenThoughts-114k-math
+dataset_config: null
+dataset_split: train
+local_dataset_path: null
+filter_correct_only: true
+max_train_samples: 0
+shuffle: true
+num_workers: 0
+
+enable_thinking: true
+max_prompt_tokens: 1024
+max_solution_tokens: 1024
+min_solution_tokens: 16
+
+alpha: 1.0
+rollout_len: 8
+corrupt_span_choices: [2]
+corrupt_start_min_ratio: 0.25
+corrupt_start_max_ratio: 0.5
+detach_rollout_cache: true
+
+micro_batch_size: 1
+grad_accum_steps: 8
+num_epochs: 1
+learning_rate: 2.0e-5
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+warmup_steps: 100
+max_grad_norm: 1.0
+
+log_interval: 10
+save_every_n_steps: 200
+keep_last_k_checkpoints: 2
+
