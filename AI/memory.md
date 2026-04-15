@@ -444,3 +444,10 @@
   - collator builds student prompts from `problem + corrupted solution prefix`
   - collator builds teacher prompts from `problem + patched solution prefix`
   - trainer still reuses the same on-policy generation and shared-rollout plumbing, and adds `loss_mode="mixed_kl"` for the LinearOPSD objective.
+
+## 2026-04-16-10:15 : LinearOPSD eval stays flat and adds a rollout-inspection script
+- `LinearOPSD/eval/` remains a flat directory for now; we did not introduce `inspect/` or `benchmarks/` subfolders because the current eval surface is still small and the lowest-risk choice is to add new scripts alongside the existing ones.
+- Added a dedicated inspection path separate from benchmark eval:
+  - `eval/inspect_linear_opsd_rollout.py` reconstructs the training-time `linear_opsd` corrupted/patched prefixes from `problem/solution` data and runs rollout from the corrupted student prompt.
+  - `eval/run_inspect_rollout.sh` is the matching launcher.
+- The inspection script reuses the same corruption/prompt helpers from `LinearOPSD/data_collator.py` so eval-time inspection stays aligned with the training-time prefix construction.

@@ -125,6 +125,10 @@
 - `LinearOPSD/opsd_train.py`: upstream OPSD training entry, now extended with `conditioning_mode`, `loss_mode`, rollout decoding, corruption controls, and configurable dataset selection so the same script can run original OPSD or `linear_opsd`.
 - `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; adds token-level `linear_opsd` collation that builds `problem + corrupted solution prefix` for student and `problem + patched prefix` for teacher.
 - `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; now also supports `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, and greedy-vs-sampling rollout control while keeping the existing generation / EMA / vLLM infrastructure.
+- `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
+- `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility that reconstructs training-time `linear_opsd` corrupted/patched prefixes and shows the resulting student rollout continuation.
+- `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
+- `LinearOPSD/eval/run_inspect_rollout.sh`: simple launcher for corrupted-prefix rollout inspection.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.
