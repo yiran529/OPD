@@ -431,3 +431,16 @@
   - then slice rollout-position logits and compute mixed KL on the fixed shared rollout.
 - Rollout still uses the local HF/Transformers model only; no vLLM integration has been added yet.
 - During rollout generation, the raw student model is temporarily switched to `eval()` so greedy tokens are not polluted by dropout, and then restored to its previous training mode.
+
+
+## 2026-04-15-17:40 : LinearOPSD stays in upstream OPSD files and keeps OPSD defaults
+- The `LinearOPSD/` adaptation is implemented by extending the existing upstream files (`opsd_train.py`, `data_collator.py`, `opsd_trainer.py`) instead of forking a second trainer path. This keeps DDP/accelerate/wandb/vLLM/EMA behavior on the original codepath.
+- Default behavior intentionally remains OPSD-like:
+  - `conditioning_mode="opsd"`
+  - `loss_mode="jsd"`
+  - `rollout_decoding="sample"`
+  - dynamic teacher remains the default (neither `fixed_teacher` nor EMA is forced on).
+- The new `conditioning_mode="linear_opsd"` path changes only the conditioning semantics:
+  - collator builds student prompts from `problem + corrupted solution prefix`
+  - collator builds teacher prompts from `problem + patched solution prefix`
+  - trainer still reuses the same on-policy generation and shared-rollout plumbing, and adds `loss_mode="mixed_kl"` for the LinearOPSD objective.
