@@ -103,10 +103,10 @@
 - `QwenOPSD/train/config.py`: strict YAML config dataclass for QwenOPSD training.
 - `QwenOPSD/train/formatting.py`: Qwen chat-template prompt building from `problem` and raw `solution` tokenization.
 - `QwenOPSD/train/data.py`: OpenThoughts math dataset loading, `problem/solution` filtering, tokenization, and sample-list dataloader construction; now supports `DistributedSampler` for DDP.
-- `QwenOPSD/train/corruption.py`: same-sample span replacement corruption over `solution` tokens, returning corrupted prefix + rollout start.
+- `QwenOPSD/train/corruption.py`: multi-span corruption over `solution` tokens; samples `B` non-overlapping spans, builds student-vs-teacher prefixes (teacher gets clean patched spans), and returns rollout-start metadata.
 - `QwenOPSD/train/losses.py`: forward-KL / reverse-KL / mixed-KL loss from full-vocabulary logits.
 - `QwenOPSD/train/runtime.py`: builds student/teacher/tokenizer/device bundle for QwenOPSD training.
-- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop; teacher runs on clean solution history, student rolls out greedily from corrupted prefix, and loss is averaged over rollout positions only; now supports single-node DDP student training plus rank-0 wandb logging/checkpointing.
+- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop; student and teacher share the same greedy student rollout history, but teacher starts from a patched prefix and student starts from the corrupted prefix; supports single-node DDP student training plus rank-0 wandb logging/checkpointing.
 - `QwenOPSD/eval/config.py`: strict YAML config dataclass for QwenOPSD eval.
 - `QwenOPSD/eval/runtime.py`: model/tokenizer/checkpoint builder for eval.
 - `QwenOPSD/eval/runner.py`: placeholder eval runner that creates output layout and writes a placeholder metrics file.

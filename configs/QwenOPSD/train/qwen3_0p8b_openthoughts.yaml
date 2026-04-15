@@ -38,6 +38,7 @@ min_solution_tokens: 16
 
 alpha: 1.0
 rollout_len: 8
+num_corrupt_spans: 1
 corrupt_span_choices: [2]
 corrupt_start_min_ratio: 0.25
 corrupt_start_max_ratio: 0.5

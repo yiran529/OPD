@@ -52,6 +52,7 @@ class QwenOPSDTrainConfig:
 
     alpha: float = 1.0
     rollout_len: int = 8
+    num_corrupt_spans: int = 1
     corrupt_span_choices: list[int] = field(default_factory=lambda: [2])
     corrupt_start_min_ratio: float = 0.25
     corrupt_start_max_ratio: float = 0.5
@@ -96,6 +97,7 @@ _INT_FIELDS = {
     "max_solution_tokens",
     "min_solution_tokens",
     "rollout_len",
+    "num_corrupt_spans",
     "micro_batch_size",
     "grad_accum_steps",
     "num_epochs",
@@ -154,6 +156,8 @@ def _validate_config_values(cfg: QwenOPSDTrainConfig) -> None:
         raise ValueError("alpha must be in [0, 1]")
     if cfg.rollout_len <= 0:
         raise ValueError("rollout_len must be positive")
+    if cfg.num_corrupt_spans <= 0:
+        raise ValueError("num_corrupt_spans must be positive")
     if not cfg.corrupt_span_choices:
         raise ValueError("corrupt_span_choices must be non-empty")
     if any((not isinstance(span_len, int) or span_len <= 0) for span_len in cfg.corrupt_span_choices):
@@ -166,9 +170,10 @@ def _validate_config_values(cfg: QwenOPSDTrainConfig) -> None:
         raise ValueError("max_solution_tokens must be positive")
     if cfg.min_solution_tokens <= 0:
         raise ValueError("min_solution_tokens must be positive")
-    if cfg.min_solution_tokens < max(cfg.corrupt_span_choices) + cfg.rollout_len:
+    if cfg.min_solution_tokens < cfg.num_corrupt_spans * max(cfg.corrupt_span_choices) + cfg.rollout_len:
         raise ValueError(
-            "min_solution_tokens must be at least max(corrupt_span_choices) + rollout_len"
+            "min_solution_tokens must be at least "
+            "num_corrupt_spans * max(corrupt_span_choices) + rollout_len"
         )
     if cfg.micro_batch_size <= 0 or cfg.grad_accum_steps <= 0:
         raise ValueError("micro_batch_size and grad_accum_steps must be positive")

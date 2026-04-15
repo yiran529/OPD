@@ -388,3 +388,36 @@
 - In distributed training, only the student model is wrapped with DDP; the frozen teacher stays as one local copy per rank.
 - `QwenOPSD/train/data.py` now uses `DistributedSampler` when `WORLD_SIZE>1`, while keeping the same sample-wise loss semantics.
 - `wandb` initialization/logging is rank-0 only, and checkpoint save is guarded by `barrier()` + main-rank write to avoid multi-rank clobbering.
+
+## 2026-04-15-19:35 : QwenOPSD prompt-template source and training data flow summary
+- `QwenOPSD/train/formatting.py` does not define its own chat template; it calls `tokenizer.apply_chat_template(...)`, so the source of truth is the model repo's tokenizer template for `Qwen/Qwen3.5-0.8B`.
+- For this checkpoint, the template is embedded in `tokenizer_config.json` (`chat_template`) and also mirrored as `chat_template.jinja` in the Hugging Face model repo.
+- Current implementation choice:
+  - `messages=[{"role":"user","content": problem}]`
+  - `add_generation_prompt=True`
+  - `enable_thinking=True`
+  - This means the rendered prompt ends at the assistant thinking prefix (`<|im_start|>assistant\n<think>\n`), and raw `solution` tokens are appended as the reasoning continuation target.
+- Current QwenOPSD training data flow is:
+  - load `problem/solution` rows from OpenThoughts math,
+  - filter invalid / overlong / optionally `correct != true` rows,
+  - tokenize `problem` via the Qwen chat template into `prompt_ids`,
+  - tokenize `solution` directly into `solution_ids`,
+  - corrupt a short span inside `solution_ids`,
+  - teacher runs one clean forward on `prompt + clean solution prefix`,
+  - student prefills on `prompt + corrupted solution prefix` and greedily rolls out,
+  - loss is mixed forward/reverse KL averaged over rollout positions only.
+
+## 2026-04-15-20:05 : QwenOPSD switched to shared-rollout teacher + multi-span corruption
+- Revised QwenOPSD to match the updated idea-5 semantics:
+  - student and teacher now share the same student-generated rollout history,
+  - teacher no longer teacher-forces on the clean gold continuation,
+  - teacher differs from student only by seeing clean patches on the corrupted spans inside the prefix.
+- `QwenOPSD/train/corruption.py` now supports configurable `num_corrupt_spans` (`B`):
+  - sample `B` non-overlapping spans with one shared span length `m`,
+  - replace corrupted tokens by independently sampled donor tokens from other positions in the same solution,
+  - build `student_prefix_ids`, `teacher_prefix_ids`, and `rollout_start = max_i(s_i + m)`.
+- `QwenOPSD/train/loop.py` now runs student/teacher caches in lockstep:
+  - prefill student on the corrupted prefix,
+  - prefill teacher on the patched prefix,
+  - compute mixed KL on current logits,
+  - advance both paths with the same greedy student token.

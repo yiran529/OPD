@@ -82,58 +82,15 @@ def _tensorize(token_ids: list[int], device: torch.device) -> torch.Tensor:
     return torch.tensor([token_ids], dtype=torch.long, device=device)
 
 
-def _teacher_rollout_logits(
-    teacher_model: torch.nn.Module,
+def _prefill_one_path(
+    model: torch.nn.Module,
     prompt_ids: list[int],
-    solution_ids: list[int],
-    rollout_start: int,
-    rollout_len: int,
-    device: torch.device,
-) -> torch.Tensor:
-    rollout_end = rollout_start + rollout_len
-    if rollout_end > len(solution_ids):
-        raise ValueError(
-            f"rollout window exceeds solution length: rollout_end={rollout_end} solution_len={len(solution_ids)}"
-        )
-
-    teacher_input_ids = _tensorize(prompt_ids + solution_ids[:rollout_end], device=device)
-    attention_mask = torch.ones_like(teacher_input_ids)
-    with torch.no_grad():
-        outputs = teacher_model(
-            input_ids=teacher_input_ids,
-            attention_mask=attention_mask,
-            use_cache=False,
-            return_dict=True,
-        )
-    logits = getattr(outputs, "logits", None)
-    if logits is None:
-        raise RuntimeError("Teacher forward did not return logits")
-
-    prompt_len = len(prompt_ids)
-    gather_start = prompt_len + rollout_start - 1
-    gather_end = gather_start + rollout_len
-    if gather_start < 0:
-        raise RuntimeError(
-            f"Invalid gather_start={gather_start}; prompt must contribute at least one token"
-        )
-    gathered_logits = logits[:, gather_start:gather_end, :]
-    if gathered_logits.size(1) != rollout_len:
-        raise RuntimeError(
-            "Teacher gathered rollout logits have the wrong length: "
-            f"expected={rollout_len} got={gathered_logits.size(1)}"
-        )
-    return gathered_logits
-
-
-def _student_prefill(
-    student_model: torch.nn.Module,
-    prompt_ids: list[int],
-    corrupted_prefix_ids: list[int],
+    prefix_ids: list[int],
     device: torch.device,
 ) -> tuple[torch.Tensor, Any]:
-    input_ids = _tensorize(prompt_ids + corrupted_prefix_ids, device=device)
+    input_ids = _tensorize(prompt_ids + prefix_ids, device=device)
     attention_mask = torch.ones_like(input_ids)
-    outputs = student_model(
+    outputs = model(
         input_ids=input_ids,
         attention_mask=attention_mask,
         use_cache=True,
@@ -141,19 +98,19 @@ def _student_prefill(
     )
     logits = getattr(outputs, "logits", None)
     if logits is None:
-        raise RuntimeError("Student prefill did not return logits")
+        raise RuntimeError("Path prefill did not return logits")
     past_key_values = getattr(outputs, "past_key_values", None)
     if past_key_values is None:
-        raise RuntimeError("Student prefill did not return past_key_values")
+        raise RuntimeError("Path prefill did not return past_key_values")
     return logits[:, -1, :], past_key_values
 
 
-def _student_decode_one_token(
-    student_model: torch.nn.Module,
+def _decode_one_token(
+    model: torch.nn.Module,
     next_token: torch.Tensor,
     past_key_values,
 ) -> tuple[torch.Tensor, Any]:
-    outputs = student_model(
+    outputs = model(
         input_ids=next_token,
         past_key_values=past_key_values,
         use_cache=True,
@@ -161,10 +118,10 @@ def _student_decode_one_token(
     )
     logits = getattr(outputs, "logits", None)
     if logits is None:
-        raise RuntimeError("Student decode did not return logits")
+        raise RuntimeError("Path decode did not return logits")
     next_cache = getattr(outputs, "past_key_values", None)
     if next_cache is None:
-        raise RuntimeError("Student decode did not return past_key_values")
+        raise RuntimeError("Path decode did not return past_key_values")
     return logits[:, -1, :], next_cache
 
 
@@ -175,42 +132,40 @@ def _compute_sample_loss(
     cfg: QwenOPSDTrainConfig,
     device: torch.device,
 ) -> tuple[DistillLossBundle, dict[str, int]]:
-    # ---- corrupt the gold reasoning prefix ----
+    # ---- corrupt the gold reasoning prefix with B spans ----
     corruption = build_corrupted_prefix(
         solution_ids=sample.solution_ids,
         rollout_len=cfg.rollout_len,
+        num_spans=cfg.num_corrupt_spans,
         span_choices=cfg.corrupt_span_choices,
         start_min_ratio=cfg.corrupt_start_min_ratio,
         start_max_ratio=cfg.corrupt_start_max_ratio,
     )
 
-    # ---- collect teacher logits under the clean reasoning trajectory ----
-    teacher_logits = _teacher_rollout_logits(
-        teacher_model=teacher_model,
+    # ---- prefill student and teacher on their respective prefixes ----
+    current_student_logits, student_cache = _prefill_one_path(
+        model=student_model,
         prompt_ids=sample.prompt_ids,
-        solution_ids=sample.solution_ids,
-        rollout_start=corruption.rollout_start,
-        rollout_len=cfg.rollout_len,
+        prefix_ids=corruption.student_prefix_ids,
         device=device,
     )
-
-    # ---- prefill the student on the corrupted prefix ----
-    current_student_logits, student_cache = _student_prefill(
-        student_model=student_model,
-        prompt_ids=sample.prompt_ids,
-        corrupted_prefix_ids=corruption.corrupted_prefix_ids,
-        device=device,
-    )
+    with torch.no_grad():
+        current_teacher_logits, teacher_cache = _prefill_one_path(
+            model=teacher_model,
+            prompt_ids=sample.prompt_ids,
+            prefix_ids=corruption.teacher_prefix_ids,
+            device=device,
+        )
 
     total_sum: torch.Tensor | None = None
     forward_sum: torch.Tensor | None = None
     reverse_sum: torch.Tensor | None = None
 
-    # ---- greedy rollout and mixed-KL distillation on rollout positions only ----
+    # ---- shared student rollout: teacher consumes the same generated history ----
     for step_idx in range(cfg.rollout_len):
         step_bundle = mixed_kl_from_logits(
             student_logits=current_student_logits,
-            teacher_logits=teacher_logits[:, step_idx, :],
+            teacher_logits=current_teacher_logits,
             alpha=cfg.alpha,
         )
         total_sum = step_bundle.total if total_sum is None else total_sum + step_bundle.total
@@ -225,13 +180,21 @@ def _compute_sample_loss(
             continue
 
         next_token = current_student_logits.argmax(dim=-1, keepdim=True)
-        current_student_logits, student_cache = _student_decode_one_token(
-            student_model=student_model,
+        current_student_logits, student_cache = _decode_one_token(
+            model=student_model,
             next_token=next_token,
             past_key_values=student_cache,
         )
+        with torch.no_grad():
+            current_teacher_logits, teacher_cache = _decode_one_token(
+                model=teacher_model,
+                next_token=next_token,
+                past_key_values=teacher_cache,
+            )
+
         if cfg.detach_rollout_cache:
             student_cache = _unwrap_cache_tree(student_cache)
+            teacher_cache = _unwrap_cache_tree(teacher_cache)
 
     assert total_sum is not None and forward_sum is not None and reverse_sum is not None
     loss_scale = float(cfg.rollout_len)
@@ -246,6 +209,7 @@ def _compute_sample_loss(
             "solution_len": len(sample.solution_ids),
             "rollout_start": corruption.rollout_start,
             "span_len": corruption.span_len,
+            "num_spans": len(corruption.spans),
         },
     )
 
@@ -370,6 +334,7 @@ def run_training(
         wandb_run.summary["model_class"] = cfg.model_class
         wandb_run.summary["alpha"] = cfg.alpha
         wandb_run.summary["rollout_len"] = cfg.rollout_len
+        wandb_run.summary["num_corrupt_spans"] = cfg.num_corrupt_spans
         wandb_run.summary["total_params"] = total_params
         wandb_run.summary["trainable_params"] = trainable_param_count
         wandb_log = wandb_run.log
@@ -397,6 +362,8 @@ def run_training(
     running_forward = torch.zeros([], device=dist_env.device)
     running_reverse = torch.zeros([], device=dist_env.device)
     running_span = 0
+    running_num_spans = 0
+    running_rollout_start = 0
     running_prompt = 0
     running_solution = 0
     running_samples = 0
@@ -418,10 +385,12 @@ def run_training(
             batch_reverse: torch.Tensor | None = None
             valid_samples = 0
             batch_span_sum = 0
+            batch_num_spans_sum = 0
+            batch_rollout_start_sum = 0
             batch_prompt_sum = 0
             batch_solution_sum = 0
 
-            with _autocast_context(cfg, device):
+            with _autocast_context(cfg, dist_env.device):
                 for sample in batch_samples:
                     sample_bundle, sample_meta = _compute_sample_loss(
                         student_model=student_model,
@@ -443,6 +412,8 @@ def run_training(
                     )
                     valid_samples += 1
                     batch_span_sum += sample_meta["span_len"]
+                    batch_num_spans_sum += sample_meta["num_spans"]
+                    batch_rollout_start_sum += sample_meta["rollout_start"]
                     batch_prompt_sum += sample_meta["prompt_len"]
                     batch_solution_sum += sample_meta["solution_len"]
 
@@ -467,6 +438,8 @@ def run_training(
             running_forward += batch_forward.detach()
             running_reverse += batch_reverse.detach()
             running_span += batch_span_sum
+            running_num_spans += batch_num_spans_sum
+            running_rollout_start += batch_rollout_start_sum
             running_prompt += batch_prompt_sum
             running_solution += batch_solution_sum
             running_samples += valid_samples
@@ -497,6 +470,18 @@ def run_training(
                     torch.tensor(running_span / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
                     dist_env.world_size,
                 )
+                mean_num_spans = reduce_mean(
+                    torch.tensor(running_num_spans / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
+                    dist_env.world_size,
+                )
+                mean_rollout_start = reduce_mean(
+                    torch.tensor(
+                        running_rollout_start / max(running_samples, 1),
+                        device=dist_env.device,
+                        dtype=torch.float32,
+                    ),
+                    dist_env.world_size,
+                )
                 mean_prompt = reduce_mean(
                     torch.tensor(running_prompt / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
                     dist_env.world_size,
@@ -516,7 +501,9 @@ def run_training(
                         f"loss_fwd_kl={mean_forward.item():.6f} "
                         f"loss_rev_kl={mean_reverse.item():.6f} "
                         f"alpha={cfg.alpha:.3f} "
+                        f"avg_num_spans={mean_num_spans.item():.2f} "
                         f"avg_span_len={mean_span.item():.2f} "
+                        f"avg_rollout_start={mean_rollout_start.item():.2f} "
                         f"avg_prompt_len={mean_prompt.item():.2f} "
                         f"avg_solution_len={mean_solution.item():.2f} "
                         f"lr={current_lr:.6e} "
@@ -529,7 +516,9 @@ def run_training(
                             "loss_kd": mean_total.item(),
                             "loss_fwd_kl": mean_forward.item(),
                             "loss_rev_kl": mean_reverse.item(),
+                            "avg_num_spans": mean_num_spans.item(),
                             "avg_span_len": mean_span.item(),
+                            "avg_rollout_start": mean_rollout_start.item(),
                             "avg_prompt_len": mean_prompt.item(),
                             "avg_solution_len": mean_solution.item(),
                             "grad_norm": grad_norm_tensor.item(),
@@ -560,6 +549,8 @@ def run_training(
             running_forward = torch.zeros([], device=dist_env.device)
             running_reverse = torch.zeros([], device=dist_env.device)
             running_span = 0
+            running_num_spans = 0
+            running_rollout_start = 0
             running_prompt = 0
             running_solution = 0
             running_samples = 0
