@@ -119,7 +119,10 @@ def build_runtime(cfg: ExposureBiasEvalConfig) -> RuntimeBundle:
             )
 
     model.eval()
-    fallback_max_len = cfg.prefix_len + cfg.rollout_len
+    if cfg.task == "hf_dataset":
+        fallback_max_len = cfg.prefix_len + cfg.rollout_len
+    else:
+        fallback_max_len = cfg.max_new_tokens
     model_max_length = _resolve_model_max_length(
         model_config=getattr(model, "config", None),
         fallback=fallback_max_len,

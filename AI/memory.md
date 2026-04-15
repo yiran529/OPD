@@ -364,3 +364,7 @@
   - `Acc(r)` for each reveal ratio,
   - `Gap_r = Acc(r) - Acc(0.0)` for `r > 0`,
   and model-vs-model gap deltas are compared via `scripts/compare_gsm8k_thought_reveal.py`.
+- For `task=gsm8k_thought_reveal`, `prefix_len` and `rollout_len` are legacy config fields with no experiment semantics:
+  - evaluation uses the full question plus revealed gold thought prefix without token truncation,
+  - output naming no longer includes `p{prefix_len}_r{rollout_len}` for GSM8K,
+  - runtime fails fast if `prompt_len + max_new_tokens` exceeds the model context length.

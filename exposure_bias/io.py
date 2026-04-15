@@ -41,13 +41,15 @@ def dataset_tag_from_source(
 def build_experiment_name(
     dataset_tag: str,
     model_name: str,
-    prefix_len: int,
-    rollout_len: int,
+    prefix_len: int | None = None,
+    rollout_len: int | None = None,
 ) -> str:
     assert dataset_tag, "dataset_tag must be non-empty"
     assert model_name, "model_name must be non-empty"
     model_slug = re.sub(r"[^A-Za-z0-9._-]+", "_", model_name.strip()).strip("._-")
     assert model_slug, f"failed to build model slug from model_name={model_name!r}"
+    if prefix_len is None or rollout_len is None:
+        return f"{dataset_tag}_{model_slug}"
     return f"{dataset_tag}_{model_slug}_p{prefix_len}_r{rollout_len}"
 
 

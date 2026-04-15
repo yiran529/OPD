@@ -74,14 +74,14 @@
 - `exposure_bias/train/checkpoint.py`: lightweight model checkpoint saver for exposure-bias finetuning.
 - `exposure_bias/train/loop.py`: minimal next-token CE training loop (single-process, no OPD logic).
 - `exposure_bias/train/tasks/gsm8k.py`: GSM8K train-split formatting into `Question / Thoughts / Final Answer` SFT text and packed-token dataloader construction.
-- `exposure_bias/eval/config.py`: independent eval config dataclass + YAML validation for HF-text CE-rollout eval and GSM8K thought-prefix reveal eval.
+- `exposure_bias/eval/config.py`: independent eval config dataclass + YAML validation for HF-text CE-rollout eval and GSM8K thought-prefix reveal eval; `prefix_len`/`rollout_len` only matter for `task=hf_dataset` and are ignored for GSM8K reveal eval.
 - `exposure_bias/eval/runtime.py`: loads model/tokenizer/checkpoint through the existing FLA loader and records model max length.
 - `exposure_bias/eval/metrics.py`: aggregates `CE_TF`, `CE_rollout`, exposure-bias gap, and rollout token match rate.
 - `exposure_bias/eval/scoring.py`: batched teacher-forcing CE, batched autoregressive rollout CE, and greedy generation helpers.
 - `exposure_bias/eval/tasks/hf_dataset.py`: HF-text eval samples from a dataset repo or local snapshot using the configured text field.
 - `exposure_bias/eval/tasks/gsm8k.py`: GSM8K rationale/final-answer parsing, thought-step splitting, reveal prompt building, and final-answer normalization.
 - `exposure_bias/eval/runners/hf_dataset.py`: batched exposure-bias eval loop for HF text datasets.
-- `exposure_bias/eval/runners/gsm8k_thought_reveal.py`: GSM8K reveal-ratio eval loop that greedily completes hidden thought suffixes and final answers.
+- `exposure_bias/eval/runners/gsm8k_thought_reveal.py`: GSM8K reveal-ratio eval loop that greedily completes hidden thought suffixes and final answers from full untruncated prompts, with fail-fast prompt-length checks against model context length.
 
 ## Exposure Bias Configs
 - `configs/exposure_bias/fineweb_edu_gdn340m.yaml`: example FineWeb-Edu exposure-bias eval config for GatedDeltaNet.

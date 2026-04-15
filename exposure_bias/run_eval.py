@@ -37,12 +37,18 @@ def main() -> None:
         predictions, metrics = run_gsm8k_thought_reveal_eval(cfg=cfg, runtime=runtime)
     else:
         raise ValueError(f"Unsupported task: {cfg.task}")
-    experiment_name = cfg.run_name or build_experiment_name(
-        dataset_tag=dataset_tag,
-        model_name=runtime.train_cfg.model_name,
-        prefix_len=cfg.prefix_len,
-        rollout_len=cfg.rollout_len,
-    )
+    if cfg.task == "hf_dataset":
+        experiment_name = cfg.run_name or build_experiment_name(
+            dataset_tag=dataset_tag,
+            model_name=runtime.train_cfg.model_name,
+            prefix_len=cfg.prefix_len,
+            rollout_len=cfg.rollout_len,
+        )
+    else:
+        experiment_name = cfg.run_name or build_experiment_name(
+            dataset_tag=dataset_tag,
+            model_name=runtime.train_cfg.model_name,
+        )
     output_dir = build_output_dir(
         output_dir=cfg.output_dir,
         experiment_name=experiment_name,

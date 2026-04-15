@@ -12,6 +12,27 @@ from exposure_bias.eval.tasks.gsm8k import (
 )
 
 
+def _assert_prompt_lengths_fit(
+    prompts: list[str],
+    runtime: RuntimeBundle,
+    cfg: ExposureBiasEvalConfig,
+) -> None:
+    prompt_ids = runtime.tokenizer(
+        prompts,
+        padding=False,
+        add_special_tokens=False,
+    )["input_ids"]
+    for prompt_idx, token_ids in enumerate(prompt_ids):
+        prompt_len = len(token_ids)
+        total_len = prompt_len + cfg.max_new_tokens
+        assert total_len <= runtime.model_max_length, (
+            f"gsm8k prompt exceeds model max length budget: "
+            f"prompt_idx={prompt_idx} prompt_len={prompt_len} "
+            f"max_new_tokens={cfg.max_new_tokens} total_len={total_len} "
+            f"model_max_length={runtime.model_max_length}"
+        )
+
+
 def _iter_example_batches(
     cfg: ExposureBiasEvalConfig,
 ):
@@ -56,6 +77,7 @@ def run_gsm8k_thought_reveal_eval(
                 )
                 reveal_counts.append(reveal_count)
 
+            _assert_prompt_lengths_fit(prompts=prompts, runtime=runtime, cfg=cfg)
             generation = generate_greedy_batch(
                 model=runtime.model,
                 tokenizer=runtime.tokenizer,

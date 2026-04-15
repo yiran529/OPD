@@ -71,10 +71,16 @@ def _validate_config_values(cfg: ExposureBiasEvalConfig) -> None:
         raise ValueError("dataset_split must be non-empty")
     if not cfg.dataset_text_field:
         raise ValueError("dataset_text_field must be non-empty")
-    if cfg.prefix_len <= 0:
-        raise ValueError("prefix_len must be positive")
-    if cfg.rollout_len <= 0:
-        raise ValueError("rollout_len must be positive")
+    if cfg.task == "hf_dataset":
+        if cfg.prefix_len <= 0:
+            raise ValueError("prefix_len must be positive")
+        if cfg.rollout_len <= 0:
+            raise ValueError("rollout_len must be positive")
+    else:
+        if cfg.prefix_len < 0:
+            raise ValueError("prefix_len must be >= 0")
+        if cfg.rollout_len < 0:
+            raise ValueError("rollout_len must be >= 0")
     if cfg.max_samples < 0:
         raise ValueError("max_samples must be >= 0")
     if cfg.batch_size <= 0:
