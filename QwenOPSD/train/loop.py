@@ -9,21 +9,28 @@ from typing import Any
 import numpy as np
 import torch
 import yaml
+from torch.nn.parallel import DistributedDataParallel as DDP
 from transformers import get_cosine_schedule_with_warmup
 
 from QwenOPSD.checkpoint import load_training_checkpoint, save_training_checkpoint
+from QwenOPSD.distributed import DistEnv, barrier, reduce_mean
 from QwenOPSD.train.config import QwenOPSDTrainConfig
 from QwenOPSD.train.corruption import build_corrupted_prefix
 from QwenOPSD.train.data import PreparedMathSample, build_train_dataloader
 from QwenOPSD.train.losses import DistillLossBundle, mixed_kl_from_logits
 
 
-def _seed_all(seed: int) -> None:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+def _unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
+    return model.module if isinstance(model, DDP) else model
+
+
+def _seed_all(seed: int, rank: int) -> None:
+    merged_seed = seed + rank
+    random.seed(merged_seed)
+    np.random.seed(merged_seed)
+    torch.manual_seed(merged_seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(merged_seed)
 
 
 def _autocast_context(cfg: QwenOPSDTrainConfig, device: torch.device):
@@ -254,32 +261,40 @@ def _optimizer_steps_per_epoch(
 
 def run_training(
     cfg: QwenOPSDTrainConfig,
+    dist_env: DistEnv,
     student_model: torch.nn.Module,
     teacher_model: torch.nn.Module,
     tokenizer,
-    device: torch.device,
 ) -> None:
-    _seed_all(cfg.seed)
+    _seed_all(cfg.seed, dist_env.rank)
 
     run_dir = Path(cfg.output_dir) / cfg.run_name
     checkpoint_dir = run_dir / "checkpoints"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "resolved_config.yaml").write_text(
-        yaml.safe_dump(cfg.as_dict(), sort_keys=False),
-        encoding="utf-8",
-    )
+    if dist_env.is_main:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "resolved_config.yaml").write_text(
+            yaml.safe_dump(cfg.as_dict(), sort_keys=False),
+            encoding="utf-8",
+        )
+    barrier()
 
-    dataloader, dataset_stats = build_train_dataloader(cfg=cfg, tokenizer=tokenizer)
-    print(
-        "dataset preparation: "
-        f"seen={dataset_stats.num_rows_seen} "
-        f"kept={dataset_stats.num_rows_kept} "
-        f"skip_missing={dataset_stats.num_rows_skipped_missing_fields} "
-        f"skip_correct={dataset_stats.num_rows_skipped_correct_filter} "
-        f"skip_prompt_len={dataset_stats.num_rows_skipped_prompt_len} "
-        f"skip_solution_len={dataset_stats.num_rows_skipped_solution_len}",
-        flush=True,
+    dataloader, dataset_stats, sampler = build_train_dataloader(
+        cfg=cfg,
+        tokenizer=tokenizer,
+        rank=dist_env.rank,
+        world_size=dist_env.world_size,
     )
+    if dist_env.is_main:
+        print(
+            "dataset preparation: "
+            f"seen={dataset_stats.num_rows_seen} "
+            f"kept={dataset_stats.num_rows_kept} "
+            f"skip_missing={dataset_stats.num_rows_skipped_missing_fields} "
+            f"skip_correct={dataset_stats.num_rows_skipped_correct_filter} "
+            f"skip_prompt_len={dataset_stats.num_rows_skipped_prompt_len} "
+            f"skip_solution_len={dataset_stats.num_rows_skipped_solution_len}",
+            flush=True,
+        )
 
     num_micro_batches = len(dataloader)
     steps_per_epoch = _optimizer_steps_per_epoch(
@@ -288,13 +303,29 @@ def run_training(
     )
     total_optimizer_steps = cfg.num_epochs * steps_per_epoch
 
-    print(
-        f"num_micro_batches={num_micro_batches} "
-        f"steps_per_epoch={steps_per_epoch} "
-        f"num_epochs={cfg.num_epochs} "
-        f"total_optimizer_steps={total_optimizer_steps}",
-        flush=True,
-    )
+    if dist_env.is_main:
+        print(
+            f"num_micro_batches={num_micro_batches} "
+            f"steps_per_epoch={steps_per_epoch} "
+            f"num_epochs={cfg.num_epochs} "
+            f"total_optimizer_steps={total_optimizer_steps}",
+            flush=True,
+        )
+
+    student_model.to(dist_env.device)
+    teacher_model.to(dist_env.device)
+    if dist_env.is_distributed:
+        ddp_find_unused_parameters = (
+            cfg.finetune_mode == "full" and cfg.model_class == "conditional_generation"
+        )
+        student_model = DDP(
+            student_model,
+            device_ids=[dist_env.local_rank],
+            broadcast_buffers=False,
+            find_unused_parameters=ddp_find_unused_parameters,
+        )
+
+    raw_student_model = _unwrap_model(student_model)
 
     optimizer, trainable_params = _build_optimizer(model=student_model, cfg=cfg)
     scheduler = get_cosine_schedule_with_warmup(
@@ -304,19 +335,45 @@ def run_training(
     )
 
     scaler = None
-    if device.type == "cuda" and cfg.dtype == "fp16":
+    if dist_env.device.type == "cuda" and cfg.dtype == "fp16":
         scaler = torch.cuda.amp.GradScaler(enabled=True)
 
-    total_params = sum(param.numel() for param in student_model.parameters())
-    trainable_param_count = sum(param.numel() for param in trainable_params)
-    print(
-        "trainable parameter summary: "
-        f"finetune_mode={cfg.finetune_mode} "
-        f"trainable_params={trainable_param_count} "
-        f"total_params={total_params} "
-        f"trainable_ratio={100.0 * trainable_param_count / max(total_params, 1):.4f}%",
-        flush=True,
-    )
+    total_params = 0
+    trainable_param_count = 0
+    if dist_env.is_main:
+        total_params = sum(param.numel() for param in student_model.parameters())
+        trainable_param_count = sum(param.numel() for param in trainable_params)
+        print(
+            "trainable parameter summary: "
+            f"finetune_mode={cfg.finetune_mode} "
+            f"trainable_params={trainable_param_count} "
+            f"total_params={total_params} "
+            f"trainable_ratio={100.0 * trainable_param_count / max(total_params, 1):.4f}%",
+            flush=True,
+        )
+
+    wandb_log = lambda *_args, **_kwargs: None
+    wandb_finish = lambda: None
+    if dist_env.is_main and cfg.wandb_enabled and cfg.wandb_mode != "disabled":
+        import wandb
+
+        wandb_run: Any = wandb.init(
+            project=cfg.wandb_project,
+            entity=cfg.wandb_entity,
+            name=cfg.wandb_run_name or cfg.run_name,
+            tags=cfg.wandb_tags or None,
+            mode=cfg.wandb_mode,
+            config=cfg.as_dict(),
+            dir=str(run_dir),
+        )
+        wandb_run.summary["world_size"] = dist_env.world_size
+        wandb_run.summary["model_class"] = cfg.model_class
+        wandb_run.summary["alpha"] = cfg.alpha
+        wandb_run.summary["rollout_len"] = cfg.rollout_len
+        wandb_run.summary["total_params"] = total_params
+        wandb_run.summary["trainable_params"] = trainable_param_count
+        wandb_log = wandb_run.log
+        wandb_finish = wandb_run.finish
 
     global_step = 0
     if cfg.resume_path:
@@ -326,24 +383,27 @@ def run_training(
             optimizer=optimizer,
             scheduler=scheduler,
             scaler=scaler,
-            device=device,
+            device=dist_env.device,
         )
-        print(f"resumed training from step={global_step} path={cfg.resume_path}", flush=True)
+        if dist_env.is_main:
+            print(f"resumed training from step={global_step} path={cfg.resume_path}", flush=True)
 
     student_model.train()
     teacher_model.eval()
 
     accum_steps = 0
     step_time = time.time()
-    running_total = torch.zeros([], device=device)
-    running_forward = torch.zeros([], device=device)
-    running_reverse = torch.zeros([], device=device)
+    running_total = torch.zeros([], device=dist_env.device)
+    running_forward = torch.zeros([], device=dist_env.device)
+    running_reverse = torch.zeros([], device=dist_env.device)
     running_span = 0
     running_prompt = 0
     running_solution = 0
     running_samples = 0
 
     for epoch_idx in range(1, cfg.num_epochs + 1):
+        if sampler is not None:
+            sampler.set_epoch(epoch_idx)
         optimizer.zero_grad(set_to_none=True)
 
         for micro_step, batch_samples in enumerate(dataloader, start=1):
@@ -368,7 +428,7 @@ def run_training(
                         teacher_model=teacher_model,
                         sample=sample,
                         cfg=cfg,
-                        device=device,
+                        device=dist_env.device,
                     )
                     batch_total = sample_bundle.total if batch_total is None else batch_total + sample_bundle.total
                     batch_forward = (
@@ -430,49 +490,79 @@ def run_training(
 
             if global_step % cfg.log_interval == 0 or global_step == 1:
                 elapsed = time.time() - step_time
-                avg_total = running_total.item() / accum_steps
-                avg_forward = running_forward.item() / accum_steps
-                avg_reverse = running_reverse.item() / accum_steps
-                avg_span = running_span / max(running_samples, 1)
-                avg_prompt = running_prompt / max(running_samples, 1)
-                avg_solution = running_solution / max(running_samples, 1)
-                print(
-                    f"epoch={epoch_idx}/{cfg.num_epochs} "
-                    f"step={global_step}/{total_optimizer_steps} "
-                    f"loss_kd={avg_total:.6f} "
-                    f"loss_fwd_kl={avg_forward:.6f} "
-                    f"loss_rev_kl={avg_reverse:.6f} "
-                    f"alpha={cfg.alpha:.3f} "
-                    f"avg_span_len={avg_span:.2f} "
-                    f"avg_prompt_len={avg_prompt:.2f} "
-                    f"avg_solution_len={avg_solution:.2f} "
-                    f"lr={scheduler.get_last_lr()[0]:.6e} "
-                    f"grad_norm={float(grad_norm):.4f} "
-                    f"dt={elapsed:.2f}s",
-                    flush=True,
+                mean_total = reduce_mean(running_total / accum_steps, dist_env.world_size)
+                mean_forward = reduce_mean(running_forward / accum_steps, dist_env.world_size)
+                mean_reverse = reduce_mean(running_reverse / accum_steps, dist_env.world_size)
+                mean_span = reduce_mean(
+                    torch.tensor(running_span / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
+                    dist_env.world_size,
                 )
+                mean_prompt = reduce_mean(
+                    torch.tensor(running_prompt / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
+                    dist_env.world_size,
+                )
+                mean_solution = reduce_mean(
+                    torch.tensor(running_solution / max(running_samples, 1), device=dist_env.device, dtype=torch.float32),
+                    dist_env.world_size,
+                )
+                grad_norm_tensor = reduce_mean(grad_norm.detach().float(), dist_env.world_size)
+                current_lr = scheduler.get_last_lr()[0]
+
+                if dist_env.is_main:
+                    print(
+                        f"epoch={epoch_idx}/{cfg.num_epochs} "
+                        f"step={global_step}/{total_optimizer_steps} "
+                        f"loss_kd={mean_total.item():.6f} "
+                        f"loss_fwd_kl={mean_forward.item():.6f} "
+                        f"loss_rev_kl={mean_reverse.item():.6f} "
+                        f"alpha={cfg.alpha:.3f} "
+                        f"avg_span_len={mean_span.item():.2f} "
+                        f"avg_prompt_len={mean_prompt.item():.2f} "
+                        f"avg_solution_len={mean_solution.item():.2f} "
+                        f"lr={current_lr:.6e} "
+                        f"grad_norm={grad_norm_tensor.item():.4f} "
+                        f"dt={elapsed:.2f}s",
+                        flush=True,
+                    )
+                    wandb_log(
+                        {
+                            "loss_kd": mean_total.item(),
+                            "loss_fwd_kl": mean_forward.item(),
+                            "loss_rev_kl": mean_reverse.item(),
+                            "avg_span_len": mean_span.item(),
+                            "avg_prompt_len": mean_prompt.item(),
+                            "avg_solution_len": mean_solution.item(),
+                            "grad_norm": grad_norm_tensor.item(),
+                            "lr": current_lr,
+                        },
+                        step=global_step,
+                    )
                 step_time = time.time()
 
             if global_step % cfg.save_every_n_steps == 0 or global_step == total_optimizer_steps:
-                checkpoint_path = save_training_checkpoint(
-                    checkpoint_dir=checkpoint_dir,
-                    step=global_step,
-                    model=student_model,
-                    optimizer=optimizer,
-                    scheduler=scheduler,
-                    scaler=scaler,
-                    config_dict=cfg.as_dict(),
-                    keep_last_k=cfg.keep_last_k_checkpoints,
-                )
-                print(f"saved checkpoint: {checkpoint_path}", flush=True)
+                barrier()
+                if dist_env.is_main:
+                    checkpoint_path = save_training_checkpoint(
+                        checkpoint_dir=checkpoint_dir,
+                        step=global_step,
+                        model=student_model,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        scaler=scaler,
+                        config_dict=cfg.as_dict(),
+                        keep_last_k=cfg.keep_last_k_checkpoints,
+                    )
+                    print(f"saved checkpoint: {checkpoint_path}", flush=True)
+                barrier()
 
             accum_steps = 0
-            running_total = torch.zeros([], device=device)
-            running_forward = torch.zeros([], device=device)
-            running_reverse = torch.zeros([], device=device)
+            running_total = torch.zeros([], device=dist_env.device)
+            running_forward = torch.zeros([], device=dist_env.device)
+            running_reverse = torch.zeros([], device=dist_env.device)
             running_span = 0
             running_prompt = 0
             running_solution = 0
             running_samples = 0
 
-    student_model.eval()
+    raw_student_model.eval()
+    wandb_finish()

@@ -382,3 +382,9 @@
   - student rollout is greedy from the corrupted prefix,
   - loss is averaged over rollout positions only,
   - eval exists only as a placeholder scaffold for now.
+
+## 2026-04-15-19:10 : QwenOPSD now carries its own DDP and wandb integration
+- `QwenOPSD/` does not import `opd.distributed`; it now has its own `QwenOPSD/distributed.py` with the same minimal primitives (`DistEnv`, init/cleanup, barrier, reduce_mean).
+- In distributed training, only the student model is wrapped with DDP; the frozen teacher stays as one local copy per rank.
+- `QwenOPSD/train/data.py` now uses `DistributedSampler` when `WORLD_SIZE>1`, while keeping the same sample-wise loss semantics.
+- `wandb` initialization/logging is rank-0 only, and checkpoint save is guarded by `barrier()` + main-rank write to avoid multi-rank clobbering.

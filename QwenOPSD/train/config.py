@@ -71,6 +71,12 @@ class QwenOPSDTrainConfig:
     log_interval: int = 20
     save_every_n_steps: int = 500
     keep_last_k_checkpoints: int = 2
+    wandb_enabled: bool = False
+    wandb_project: str = "QwenOPSD"
+    wandb_entity: Optional[str] = None
+    wandb_run_name: Optional[str] = None
+    wandb_tags: list[str] = field(default_factory=list)
+    wandb_mode: str = "online"
 
     @property
     def effective_teacher_model_name(self) -> str:
@@ -178,6 +184,12 @@ def _validate_config_values(cfg: QwenOPSDTrainConfig) -> None:
         raise ValueError("save_every_n_steps must be positive")
     if cfg.keep_last_k_checkpoints < 0:
         raise ValueError("keep_last_k_checkpoints must be >= 0")
+    if cfg.wandb_mode not in {"online", "offline", "disabled"}:
+        raise ValueError(f"Unsupported wandb_mode: {cfg.wandb_mode}")
+    if cfg.wandb_enabled and not cfg.wandb_project:
+        raise ValueError("wandb_project must be non-empty when wandb_enabled=true")
+    if any((not isinstance(tag, str) or not tag) for tag in cfg.wandb_tags):
+        raise ValueError("wandb_tags must be a list of non-empty strings")
 
 
 def load_config(path: str) -> QwenOPSDTrainConfig:

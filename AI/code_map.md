@@ -96,16 +96,17 @@
 - `configs/exposure_bias_train/scifi_tv_gdn340m_lora_last4.yaml`: example standalone HF-dataset LoRA finetune config for `Scifi_TV_Shows`.
 
 ## QwenOPSD Package (`QwenOPSD/`)
+- `QwenOPSD/distributed.py`: self-contained distributed helpers for QwenOPSD training (`DistEnv`, init/cleanup, barrier, reduce_mean) so the package does not depend on `opd/`.
 - `QwenOPSD/model_loader.py`: explicit Qwen3.5 loader with fail-fast class checks (`Qwen3_5ForConditionalGeneration` / `Qwen3_5ForCausalLM`), tokenizer/chat-template setup, optional LoRA wrapping, and startup sanity forward.
 - `QwenOPSD/checkpoint.py`: save/load helpers for QwenOPSD training checkpoints and model-only restore for eval.
 - `QwenOPSD/io.py`: eval output dir layout plus shared json/jsonl writing helpers.
 - `QwenOPSD/train/config.py`: strict YAML config dataclass for QwenOPSD training.
 - `QwenOPSD/train/formatting.py`: Qwen chat-template prompt building from `problem` and raw `solution` tokenization.
-- `QwenOPSD/train/data.py`: OpenThoughts math dataset loading, `problem/solution` filtering, tokenization, and sample-list dataloader construction.
+- `QwenOPSD/train/data.py`: OpenThoughts math dataset loading, `problem/solution` filtering, tokenization, and sample-list dataloader construction; now supports `DistributedSampler` for DDP.
 - `QwenOPSD/train/corruption.py`: same-sample span replacement corruption over `solution` tokens, returning corrupted prefix + rollout start.
 - `QwenOPSD/train/losses.py`: forward-KL / reverse-KL / mixed-KL loss from full-vocabulary logits.
 - `QwenOPSD/train/runtime.py`: builds student/teacher/tokenizer/device bundle for QwenOPSD training.
-- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop; teacher runs on clean solution history, student rolls out greedily from corrupted prefix, and loss is averaged over rollout positions only.
+- `QwenOPSD/train/loop.py`: explicit sample-wise KD training loop; teacher runs on clean solution history, student rolls out greedily from corrupted prefix, and loss is averaged over rollout positions only; now supports single-node DDP student training plus rank-0 wandb logging/checkpointing.
 - `QwenOPSD/eval/config.py`: strict YAML config dataclass for QwenOPSD eval.
 - `QwenOPSD/eval/runtime.py`: model/tokenizer/checkpoint builder for eval.
 - `QwenOPSD/eval/runner.py`: placeholder eval runner that creates output layout and writes a placeholder metrics file.

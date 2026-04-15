@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+from QwenOPSD.distributed import cleanup_distributed, init_distributed
 from QwenOPSD.train.config import load_config
 from QwenOPSD.train.loop import run_training
 from QwenOPSD.train.runtime import build_train_runtime
@@ -16,16 +17,19 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config)
-    runtime = build_train_runtime(cfg)
-    run_training(
-        cfg=cfg,
-        student_model=runtime.student_model,
-        teacher_model=runtime.teacher_model,
-        tokenizer=runtime.tokenizer,
-        device=runtime.device,
-    )
+    dist_env = init_distributed()
+    try:
+        runtime = build_train_runtime(cfg=cfg, device=dist_env.device)
+        run_training(
+            cfg=cfg,
+            dist_env=dist_env,
+            student_model=runtime.student_model,
+            teacher_model=runtime.teacher_model,
+            tokenizer=runtime.tokenizer,
+        )
+    finally:
+        cleanup_distributed()
 
 
 if __name__ == "__main__":
     main()
-

@@ -8,12 +8,6 @@ from QwenOPSD.model_loader import build_model_and_tokenizer, freeze_model
 from QwenOPSD.train.config import QwenOPSDTrainConfig
 
 
-def resolve_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
 @dataclass
 class TrainRuntimeBundle:
     student_model: torch.nn.Module
@@ -22,8 +16,10 @@ class TrainRuntimeBundle:
     device: torch.device
 
 
-def build_train_runtime(cfg: QwenOPSDTrainConfig) -> TrainRuntimeBundle:
-    device = resolve_device()
+def build_train_runtime(
+    cfg: QwenOPSDTrainConfig,
+    device: torch.device,
+) -> TrainRuntimeBundle:
     student_model, tokenizer = build_model_and_tokenizer(
         model_name=cfg.model_name,
         tokenizer_name=cfg.tokenizer_name,
@@ -58,4 +54,3 @@ def build_train_runtime(cfg: QwenOPSDTrainConfig) -> TrainRuntimeBundle:
         tokenizer=tokenizer,
         device=device,
     )
-

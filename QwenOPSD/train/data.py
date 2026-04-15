@@ -5,6 +5,7 @@ from pathlib import Path
 
 from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 from torch.utils.data import DataLoader, Dataset as TorchDataset
+from torch.utils.data.distributed import DistributedSampler
 
 from QwenOPSD.train.config import QwenOPSDTrainConfig
 from QwenOPSD.train.formatting import build_prompt_token_ids, encode_solution_token_ids
@@ -151,15 +152,28 @@ def _collate_samples(samples: list[PreparedMathSample]) -> list[PreparedMathSamp
 def build_train_dataloader(
     cfg: QwenOPSDTrainConfig,
     tokenizer,
-) -> tuple[DataLoader, DatasetPreparationStats]:
+    rank: int,
+    world_size: int,
+) -> tuple[DataLoader, DatasetPreparationStats, DistributedSampler | None]:
     dataset = _prepare_samples(cfg=cfg, tokenizer=tokenizer)
+    sampler: DistributedSampler | None = None
+    shuffle = cfg.shuffle
+    if world_size > 1:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=cfg.shuffle,
+            drop_last=False,
+        )
+        shuffle = False
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.micro_batch_size,
-        shuffle=cfg.shuffle,
+        shuffle=shuffle,
+        sampler=sampler,
         num_workers=cfg.num_workers,
         pin_memory=False,
         collate_fn=_collate_samples,
     )
-    return dataloader, dataset.stats
-
+    return dataloader, dataset.stats, sampler
