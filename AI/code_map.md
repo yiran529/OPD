@@ -129,6 +129,7 @@
 - `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility that reconstructs training-time `linear_opsd` corrupted/patched prefixes and shows the resulting student rollout continuation.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
 - `LinearOPSD/eval/run_inspect_rollout.sh`: simple launcher for corrupted-prefix rollout inspection.
+- `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/5.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, sampling rollout, and LoRA + colocated vLLM.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.
