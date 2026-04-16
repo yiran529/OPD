@@ -127,9 +127,9 @@
 - `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; `linear_opsd` now only tokenizes static materials (`problem` prompt ids and `solution` ids) and leaves corruption/prompt construction to trainer time.
 - `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; `conditioning_mode=linear_opsd` now performs an extra no-grad clean forward, calls `LinearOPSD/corruption.py` online to build student/teacher prompts, then reuses the shared-rollout generation and mixed-KL supervision path.
 - `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
-- `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection script currently marked as needing a rewrite for the new trainer-time entropy-based point-corruption path; old collator-time span corruption has been removed.
+- `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility for the new trainer-time `linear_opsd` path; it loads a local HF model for clean teacher-forcing logits, applies the same entropy-based point corruption as training, then uses vLLM to rollout from the resulting student prompt and reports corruption details / traces.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
-- `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the inspection script; argument names are updated to the point-corruption configuration surface, but the script itself still needs a full rewrite.
+- `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the entropy-based point-corruption inspection script.
 - `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, entropy-based point corruption, sampling rollout, and LoRA + colocated vLLM.
 
 ## Dependencies

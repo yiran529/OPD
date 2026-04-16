@@ -2,10 +2,12 @@ import argparse
 import json
 import random
 import sys
+import warnings
 from pathlib import Path
 
+import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -15,6 +17,7 @@ if str(CURRENT_DIR) not in sys.path:
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from corruption import build_online_corruption, is_style_token
 from data_collator import _build_problem_prompt_ids, _encode_solution_ids
 
 
@@ -87,6 +90,34 @@ def load_vllm_model(
     return llm, tokenizer
 
 
+def load_hf_model_for_corruption(base_model_path: str, checkpoint_dir: str = None, device: str = "cpu"):
+    print(f"Loading HF model for corruption scoring from: {base_model_path} on {device}")
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model_path,
+        trust_remote_code=True,
+        torch_dtype=torch.float32,
+        low_cpu_mem_usage=True,
+    )
+
+    if checkpoint_dir is not None:
+        adapter_safetensors = Path(checkpoint_dir) / "adapter_model.safetensors"
+        adapter_bin = Path(checkpoint_dir) / "adapter_model.bin"
+        if adapter_safetensors.exists() or adapter_bin.exists():
+            try:
+                from peft import PeftModel
+
+                model = PeftModel.from_pretrained(model, checkpoint_dir)
+                print(f"Loaded LoRA adapter into HF scoring model from: {checkpoint_dir}")
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to load LoRA adapter into HF scoring model ({exc}); falling back to base model only"
+                )
+
+    model.to(device)
+    model.eval()
+    return model
+
+
 def _build_lora_request(checkpoint_dir):
     if checkpoint_dir is None:
         return None
@@ -110,72 +141,92 @@ def _decode_ids(tokenizer, token_ids):
     return tokenizer.decode(token_ids, skip_special_tokens=False)
 
 
-def _extract_corrupted_spans(tokenizer, student_prefix_ids, teacher_prefix_ids):
-    assert len(student_prefix_ids) == len(teacher_prefix_ids), "student/teacher prefix lengths must match"
-
-    spans = []
-    span_start = None
-    for idx, (student_token, teacher_token) in enumerate(zip(student_prefix_ids, teacher_prefix_ids)):
-        if student_token != teacher_token and span_start is None:
-            span_start = idx
-        elif student_token == teacher_token and span_start is not None:
-            span_end = idx
-            spans.append(
-                {
-                    "start": span_start,
-                    "end": span_end,
-                    "length": span_end - span_start,
-                    "corrupted_text": _decode_ids(tokenizer, student_prefix_ids[span_start:span_end]),
-                    "clean_text": _decode_ids(tokenizer, teacher_prefix_ids[span_start:span_end]),
-                }
-            )
-            span_start = None
-
-    if span_start is not None:
-        span_end = len(student_prefix_ids)
-        spans.append(
+def _format_corruption_details(tokenizer, solution_ids, corruption):
+    details = []
+    entropies = corruption["entropies"]
+    replacement_token_ids = corruption["replacement_token_ids"]
+    for pos, replacement_id in zip(corruption["corruption_positions"], replacement_token_ids):
+        gold_id = int(solution_ids[pos])
+        details.append(
             {
-                "start": span_start,
-                "end": span_end,
-                "length": span_end - span_start,
-                "corrupted_text": _decode_ids(tokenizer, student_prefix_ids[span_start:span_end]),
-                "clean_text": _decode_ids(tokenizer, teacher_prefix_ids[span_start:span_end]),
+                "position": int(pos),
+                "entropy": float(entropies[pos].item()),
+                "gold_token_id": gold_id,
+                "gold_token_text": _decode_ids(tokenizer, [gold_id]),
+                "replacement_token_id": int(replacement_id),
+                "replacement_token_text": _decode_ids(tokenizer, [replacement_id]),
+                "is_style_token_gold": bool(is_style_token(tokenizer, gold_id)),
             }
         )
-
-    return spans
-
-
-def _annotate_spans(tokenizer, token_ids, spans, tag_name):
-    if not spans:
-        return _decode_ids(tokenizer, token_ids)
-
-    chunks = []
-    cursor = 0
-    for span in spans:
-        start = span["start"]
-        end = span["end"]
-        assert 0 <= start <= end <= len(token_ids), f"Invalid span bounds: start={start} end={end}"
-
-        if cursor < start:
-            chunks.append(_decode_ids(tokenizer, token_ids[cursor:start]))
-
-        chunks.append(f"[[{tag_name} start={start} len={span['length']}]]")
-        chunks.append(_decode_ids(tokenizer, token_ids[start:end]))
-        chunks.append(f"[[/{tag_name}]]")
-        cursor = end
-
-    if cursor < len(token_ids):
-        chunks.append(_decode_ids(tokenizer, token_ids[cursor:]))
-
-    return "".join(chunks)
+    return details
 
 
-def _prepare_examples(dataset, tokenizer, args):
-    raise NotImplementedError(
-        "inspect_linear_opsd_rollout.py still targets the removed collator-time span corruption path. "
-        "It needs a dedicated rewrite for trainer-time entropy-based point corruption."
-    )
+def _prepare_examples(dataset, tokenizer, hf_model, device, args):
+    examples = []
+    upper_bound = min(len(dataset), args.start_index + args.num_examples)
+
+    for index in range(args.start_index, upper_bound):
+        feature = dataset[index]
+        problem = feature["problem"]
+        solution = feature["solution"]
+
+        problem_prompt_ids = _build_problem_prompt_ids(tokenizer, problem)
+        solution_ids = _encode_solution_ids(tokenizer, solution)
+        clean_input_ids = torch.tensor([problem_prompt_ids + solution_ids], dtype=torch.long, device=device)
+        clean_attention_mask = torch.ones_like(clean_input_ids)
+
+        with torch.no_grad():
+            outputs = hf_model(
+                input_ids=clean_input_ids,
+                attention_mask=clean_attention_mask,
+            )
+        solution_logits = outputs.logits[0, len(problem_prompt_ids) - 1 : len(problem_prompt_ids) + len(solution_ids) - 1, :]
+
+        with warnings.catch_warnings(record=True) as warning_records:
+            warnings.simplefilter("always")
+            corruption = build_online_corruption(
+                tokenizer=tokenizer,
+                problem=problem,
+                solution=solution,
+                problem_prompt_ids=problem_prompt_ids,
+                solution_ids=solution_ids,
+                solution_logits=solution_logits,
+                num_corrupt_points=args.num_corrupt_points,
+                rollout_start_offset=args.rollout_start_offset,
+                rollout_start_offset_jitter=args.rollout_start_offset_jitter,
+                corrupt_start_min_ratio=args.corrupt_start_min_ratio,
+                corrupt_start_max_ratio=args.corrupt_start_max_ratio,
+                corrupt_marker_text=args.corrupt_marker_text,
+            )
+
+        teacher_messages = [{"role": "user", "content": corruption["teacher_user_message"]}]
+        teacher_prompt_text = tokenizer.apply_chat_template(
+            teacher_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
+
+        example = {
+            "dataset_index": index,
+            "problem": problem,
+            "solution_text": _decode_ids(tokenizer, solution_ids),
+            "student_prefix_text": _decode_ids(tokenizer, corruption["corrupted_prefix_ids"]),
+            "teacher_trace_text": corruption["teacher_trace_text"],
+            "rollout_start": int(corruption["rollout_start"]),
+            "rollout_start_offset": int(corruption["rollout_start_offset"]),
+            "rollout_start_offset_delta": int(corruption["rollout_start_offset_delta"]),
+            "solution_length": len(solution_ids),
+            "num_corrupt_points_requested": int(args.num_corrupt_points),
+            "num_corrupt_points_actual": len(corruption["corruption_positions"]),
+            "corruption_points": _format_corruption_details(tokenizer, solution_ids, corruption),
+            "warnings": [str(record.message) for record in warning_records],
+            "student_prompt_text": _decode_ids(tokenizer, corruption["student_prompt_ids"]),
+        }
+        examples.append(example)
+
+    assert examples, "No examples selected for inspection"
+    return examples
 
 
 def _build_sampling_params(args):
@@ -202,9 +253,36 @@ def _build_sampling_params(args):
     )
 
 
-def _append_section(report_lines, title, content):
-    report_lines.append(f"##### {title} #####")
-    report_lines.append(content)
+def _append_block(report_lines, title, content):
+    report_lines.append("")
+    report_lines.append("#" * 24 + f" {title} " + "#" * 24)
+    report_lines.append(content if content else "(empty)")
+
+
+def _format_corruption_block(example):
+    lines = [
+        f"rollout_start: {example['rollout_start']}",
+        f"rollout_start_offset: {example['rollout_start_offset']}",
+        f"rollout_start_offset_delta: {example['rollout_start_offset_delta']}",
+        f"num_corrupt_points: {example['num_corrupt_points_actual']} / requested {example['num_corrupt_points_requested']}",
+    ]
+    if example["corruption_points"]:
+        lines.append("")
+        for idx, point in enumerate(example["corruption_points"], start=1):
+            lines.append(
+                f"[{idx}] pos={point['position']} entropy={point['entropy']:.4f} "
+                f"gold={point['gold_token_text']!r} -> repl={point['replacement_token_text']!r}"
+            )
+    else:
+        lines.append("")
+        lines.append("No corruption points selected.")
+
+    if example["warnings"]:
+        lines.append("")
+        lines.append("warnings:")
+        for warning_text in example["warnings"]:
+            lines.append(f"- {warning_text}")
+    return "\n".join(lines)
 
 
 def _write_outputs(examples, output_jsonl):
@@ -217,33 +295,16 @@ def _write_outputs(examples, output_jsonl):
 
     report_lines = []
     for example in examples:
-        report_lines.append("=" * 100)
-        report_lines.append(f"dataset_index: {example['dataset_index']}")
-        report_lines.append(f"rollout_start: {example['rollout_start']}")
-        report_lines.append(f"rollout_start_offset: {example['rollout_start_offset']}")
-        report_lines.append(f"rollout_start_offset_delta: {example['rollout_start_offset_delta']}")
-        report_lines.append(f"num_spans: {example['num_spans']}")
-        report_lines.append(f"span_len: {example['span_len']}")
-        report_lines.append(f"solution_length: {example['solution_length']}")
-        _append_section(report_lines, "problem", example["problem"])
-        _append_section(report_lines, "clean_prefix_text", example["clean_prefix_text"])
-        _append_section(report_lines, "student_prefix_text", example["student_prefix_text"])
-        _append_section(report_lines, "student_prefix_annotated", example["student_prefix_annotated"])
-        _append_section(report_lines, "teacher_prefix_text", example["teacher_prefix_text"])
-        _append_section(report_lines, "teacher_prefix_annotated", example["teacher_prefix_annotated"])
-        report_lines.append("corrupted_spans:")
-        for span in example["corrupted_spans"]:
-            report_lines.append(
-                f"  start={span['start']} length={span['length']} "
-                f"corrupted={span['corrupted_text']!r} clean={span['clean_text']!r}"
-            )
-        _append_section(report_lines, "rollout_text", example["rollout_text"])
-        _append_section(report_lines, "rollout_annotated", example["rollout_annotated"])
-        _append_section(
-            report_lines,
-            "student_prompt_plus_rollout_annotated",
-            example["student_prompt_plus_rollout_annotated"],
-        )
+        report_lines.append("")
+        report_lines.append("=" * 120)
+        report_lines.append(f"EXAMPLE {example['dataset_index']}")
+        report_lines.append("=" * 120)
+        _append_block(report_lines, "Problem", example["problem"])
+        _append_block(report_lines, "Gold Solution", example["solution_text"])
+        _append_block(report_lines, "Corruption", _format_corruption_block(example))
+        _append_block(report_lines, "Student Prefix", example["student_prefix_text"])
+        _append_block(report_lines, "Teacher Trace", example["teacher_trace_text"])
+        _append_block(report_lines, "Rollout", example.get("rollout_text", ""))
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
     return output_txt
@@ -251,7 +312,7 @@ def _write_outputs(examples, output_jsonl):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Inspect LinearOPSD corrupted prefixes and student rollouts on math reasoning data."
+        description="Inspect trainer-time entropy-based LinearOPSD corruption and student rollouts on math reasoning data."
     )
     parser.add_argument("--base_model", type=str, required=True, help="Base model path for vLLM inference.")
     parser.add_argument(
@@ -274,6 +335,7 @@ def main():
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9)
     parser.add_argument("--tensor_parallel_size", type=int, default=1)
     parser.add_argument("--max_model_len", type=int, default=None)
+    parser.add_argument("--corruption_device", type=str, default="cpu", help="Device for HF corruption scoring model.")
     parser.add_argument("--rollout_decoding", choices=["sample", "greedy"], default="sample")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_p", type=float, default=1.0)
@@ -305,6 +367,7 @@ def main():
     )
 
     random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
     llm, tokenizer = load_vllm_model(
         args.base_model,
@@ -315,9 +378,14 @@ def main():
         enable_thinking=args.enable_thinking,
     )
     lora_request = _build_lora_request(args.checkpoint_dir)
+    hf_model = load_hf_model_for_corruption(
+        args.base_model,
+        checkpoint_dir=args.checkpoint_dir,
+        device=args.corruption_device,
+    )
 
     dataset = load_dataset(args.dataset_name, split=args.dataset_split)
-    examples = _prepare_examples(dataset, tokenizer, args)
+    examples = _prepare_examples(dataset, tokenizer, hf_model, args.corruption_device, args)
 
     sampling_params = _build_sampling_params(args)
     prompts = [example["student_prompt_text"] for example in examples]
@@ -330,11 +398,6 @@ def main():
         generated = output.outputs[0]
         example["rollout_text"] = generated.text
         example["rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
-        example["rollout_annotated"] = f"[[ROLLOUT]]{generated.text}[[/ROLLOUT]]"
-        example["student_prompt_plus_rollout_text"] = example["student_prompt_text"] + generated.text
-        example["student_prompt_plus_rollout_annotated"] = (
-            example["problem_prompt_text"] + example["student_prefix_annotated"] + example["rollout_annotated"]
-        )
         example["decoding_mode"] = args.rollout_decoding
         example["checkpoint_dir"] = args.checkpoint_dir
         example["base_model"] = args.base_model

@@ -481,3 +481,11 @@
   - removed: `num_corrupt_spans`, `corrupt_span_choices`
   - added: `num_corrupt_points`, `corrupt_marker_text`
 - Current inspection scripts are not yet aligned with the new trainer-time corruption path and need a dedicated rewrite instead of reusing the removed collator helper path.
+
+## 2026-04-17-10:45 : LinearOPSD inspection now mirrors trainer-time corruption
+- `LinearOPSD/eval/inspect_linear_opsd_rollout.py` no longer depends on the removed collator-time `_build_linear_opsd_prefixes` helper.
+- The inspection path now mirrors training semantics more closely:
+  - use a local HF causal LM forward pass to score the clean `problem + solution` trajectory,
+  - call `LinearOPSD/corruption.py` to build entropy-based point corruption and the teacher-visible `<corrupt>` trace,
+  - use vLLM only for rollout from the resulting student prompt.
+- This keeps corruption selection and prompt construction aligned with the trainer, while still using vLLM for fast continuation inspection.
