@@ -28,14 +28,16 @@ def _sample_non_overlapping_starts(
     solution_length,
     span_len,
     rollout_len,
+    rollout_start_offset,
     num_spans,
     start_min_ratio,
     start_max_ratio,
 ):
-    latest_start = solution_length - span_len - rollout_len
+    latest_start = solution_length - span_len - rollout_start_offset - rollout_len
     assert latest_start >= 0, (
         "solution is too short for the requested corruption + rollout: "
-        f"solution_length={solution_length} span_len={span_len} rollout_len={rollout_len}"
+        f"solution_length={solution_length} span_len={span_len} "
+        f"rollout_start_offset={rollout_start_offset} rollout_len={rollout_len}"
     )
 
     start_min = min(int(solution_length * start_min_ratio), latest_start)
@@ -67,6 +69,19 @@ def _sample_non_overlapping_starts(
     return sorted(selected)
 
 
+def _sample_rollout_start_offset(base_offset, offset_jitter):
+    assert base_offset >= 0, "rollout_start_offset must be non-negative"
+    assert offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
+
+    min_delta = -min(base_offset, offset_jitter)
+    max_delta = offset_jitter
+    sampled_delta = random.randint(min_delta, max_delta)
+    sampled_offset = base_offset + sampled_delta
+
+    assert sampled_offset >= 0, "sampled rollout_start_offset must be non-negative"
+    return sampled_offset, sampled_delta
+
+
 def _get_local_donor_positions(solution_length, corrupted_positions, span_start, span_len):
     span_center = span_start + (span_len - 1) / 2.0
     available_positions = [idx for idx in range(solution_length) if idx not in corrupted_positions]
@@ -82,6 +97,8 @@ def _get_local_donor_positions(solution_length, corrupted_positions, span_start,
 def _build_linear_opsd_prefixes(
     solution_ids,
     rollout_len,
+    rollout_start_offset,
+    rollout_start_offset_jitter,
     num_spans,
     span_choices,
     start_min_ratio,
@@ -90,16 +107,20 @@ def _build_linear_opsd_prefixes(
     solution_length = len(solution_ids)
     span_len = int(random.choice(span_choices))
     assert span_len > 0, "sampled span_len must be positive"
-    assert solution_length >= num_spans * span_len + rollout_len, (
+    sampled_rollout_start_offset, sampled_rollout_start_offset_delta = _sample_rollout_start_offset(
+        rollout_start_offset, rollout_start_offset_jitter
+    )
+    assert solution_length >= num_spans * span_len + sampled_rollout_start_offset + rollout_len, (
         "solution is too short for corruption + rollout: "
         f"solution_length={solution_length} span_len={span_len} "
-        f"num_spans={num_spans} rollout_len={rollout_len}"
+        f"num_spans={num_spans} rollout_start_offset={sampled_rollout_start_offset} rollout_len={rollout_len}"
     )
 
     span_starts = _sample_non_overlapping_starts(
         solution_length=solution_length,
         span_len=span_len,
         rollout_len=rollout_len,
+        rollout_start_offset=sampled_rollout_start_offset,
         num_spans=num_spans,
         start_min_ratio=start_min_ratio,
         start_max_ratio=start_max_ratio,
@@ -123,7 +144,7 @@ def _build_linear_opsd_prefixes(
         corrupted_solution[span_start : span_start + span_len] = corrupted_tokens
         clean_spans.append((span_start, clean_tokens))
 
-    rollout_start = max(span_start + span_len for span_start in span_starts)
+    rollout_start = max(span_start + span_len for span_start in span_starts) + sampled_rollout_start_offset
     student_prefix_ids = corrupted_solution[:rollout_start]
     teacher_prefix_ids = list(student_prefix_ids)
     for span_start, clean_tokens in clean_spans:
@@ -133,6 +154,8 @@ def _build_linear_opsd_prefixes(
         "student_prefix_ids": student_prefix_ids,
         "teacher_prefix_ids": teacher_prefix_ids,
         "rollout_start": rollout_start,
+        "rollout_start_offset": sampled_rollout_start_offset,
+        "rollout_start_offset_delta": sampled_rollout_start_offset_delta,
         "num_spans": num_spans,
         "span_len": span_len,
         "solution_length": solution_length,
@@ -176,6 +199,8 @@ class SelfDistillationDataCollator:
         reason_first=True,
         conditioning_mode="opsd",
         rollout_len=128,
+        rollout_start_offset=2,
+        rollout_start_offset_jitter=10,
         num_corrupt_spans=1,
         corrupt_span_choices=None,
         corrupt_start_min_ratio=0.0,
@@ -186,6 +211,8 @@ class SelfDistillationDataCollator:
         self.reason_first = reason_first
         self.conditioning_mode = conditioning_mode
         self.rollout_len = rollout_len
+        self.rollout_start_offset = rollout_start_offset
+        self.rollout_start_offset_jitter = rollout_start_offset_jitter
         self.num_corrupt_spans = num_corrupt_spans
         self.corrupt_span_choices = corrupt_span_choices or [2]
         self.corrupt_start_min_ratio = corrupt_start_min_ratio
@@ -241,6 +268,8 @@ class SelfDistillationDataCollator:
             corruption = _build_linear_opsd_prefixes(
                 solution_ids=solution_ids,
                 rollout_len=self.rollout_len,
+                rollout_start_offset=self.rollout_start_offset,
+                rollout_start_offset_jitter=self.rollout_start_offset_jitter,
                 num_spans=self.num_corrupt_spans,
                 span_choices=self.corrupt_span_choices,
                 start_min_ratio=self.corrupt_start_min_ratio,

@@ -144,6 +144,8 @@ class OPSDTrainer(SFTTrainer):
         linear_opsd_alpha: float = 1.0,
         num_corrupt_spans: int = 1,
         corrupt_span_choices: list[int] | None = None,
+        rollout_start_offset: int = 2,
+        rollout_start_offset_jitter: int = 10,
         corrupt_start_min_ratio: float = 0.0,
         corrupt_start_max_ratio: float = 0.5,
         top_k_loss: int | None = None,
@@ -167,6 +169,8 @@ class OPSDTrainer(SFTTrainer):
                 rollout_len=args.max_completion_length,
                 num_corrupt_spans=num_corrupt_spans,
                 corrupt_span_choices=corrupt_span_choices,
+                rollout_start_offset=rollout_start_offset,
+                rollout_start_offset_jitter=rollout_start_offset_jitter,
                 corrupt_start_min_ratio=corrupt_start_min_ratio,
                 corrupt_start_max_ratio=corrupt_start_max_ratio,
             )

@@ -451,3 +451,10 @@
   - `eval/inspect_linear_opsd_rollout.py` reconstructs the training-time `linear_opsd` corrupted/patched prefixes from `problem/solution` data and runs rollout from the corrupted student prompt.
   - `eval/run_inspect_rollout.sh` is the matching launcher.
 - The inspection script reuses the same corruption/prompt helpers from `LinearOPSD/data_collator.py` so eval-time inspection stays aligned with the training-time prefix construction.
+
+
+## 2026-04-16-11:30 : LinearOPSD rollout start now uses an explicit post-corruption offset
+- `LinearOPSD/data_collator.py` no longer starts rollout immediately after the last corrupted span.
+- New knobs: `rollout_start_offset` (current default `2`) and `rollout_start_offset_jitter` (current default `10`).
+- Effective rollout gap is now sampled per example as `base_offset + delta`, where `delta` is an integer jitter bounded by the configured max and clipped on the negative side so the final offset stays non-negative.
+- The offset is now threaded through both training (`opsd_train.py` / `opsd_trainer.py`) and inspection (`eval/inspect_linear_opsd_rollout.py`) so the reported prefix layout matches training-time behavior.

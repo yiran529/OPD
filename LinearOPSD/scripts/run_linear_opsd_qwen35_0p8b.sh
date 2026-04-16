@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 # - conditioning_mode=linear_opsd
 # - loss_mode=mixed_kl
 # - alpha=1.0
-# - B=1, m=2, K=8
+# - B=1, m=2, offset=2±10, K=8
 # - sampling rollout
 
 accelerate launch \
@@ -21,7 +21,7 @@ accelerate launch \
     --dataset_name open-r1/OpenThoughts-114k-math \
     --dataset_split train \
     --output_dir outputs/linear_opsd \
-    --run_config qwen35_0p8b_linear_opsd_a1_b1_m2_k8_sample \
+    --run_config qwen35_0p8b_linear_opsd_a1_b1_m2_o2pm10_k8_sample \
     --learning_rate 5e-6 \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
@@ -44,6 +44,8 @@ accelerate launch \
     --rollout_decoding sample \
     --linear_opsd_alpha 1.0 \
     --num_corrupt_spans 1 \
+    --rollout_start_offset 2 \
+    --rollout_start_offset_jitter 10 \
     --corrupt_span_choices 2 \
     --corrupt_start_min_ratio 0.0 \
     --corrupt_start_max_ratio 0.5 \

@@ -184,6 +184,8 @@ def _prepare_examples(dataset, tokenizer, args):
         corruption = _build_linear_opsd_prefixes(
             solution_ids=solution_ids,
             rollout_len=args.max_new_tokens,
+            rollout_start_offset=args.rollout_start_offset,
+            rollout_start_offset_jitter=args.rollout_start_offset_jitter,
             num_spans=args.num_corrupt_spans,
             span_choices=args.corrupt_span_choices,
             start_min_ratio=args.corrupt_start_min_ratio,
@@ -207,6 +209,8 @@ def _prepare_examples(dataset, tokenizer, args):
             "student_prompt_ids": student_prompt_ids,
             "teacher_prompt_ids": teacher_prompt_ids,
             "rollout_start": corruption["rollout_start"],
+            "rollout_start_offset": corruption["rollout_start_offset"],
+            "rollout_start_offset_delta": corruption["rollout_start_offset_delta"],
             "num_spans": corruption["num_spans"],
             "span_len": corruption["span_len"],
             "solution_length": corruption["solution_length"],
@@ -268,6 +272,8 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append("=" * 100)
         report_lines.append(f"dataset_index: {example['dataset_index']}")
         report_lines.append(f"rollout_start: {example['rollout_start']}")
+        report_lines.append(f"rollout_start_offset: {example['rollout_start_offset']}")
+        report_lines.append(f"rollout_start_offset_delta: {example['rollout_start_offset_delta']}")
         report_lines.append(f"num_spans: {example['num_spans']}")
         report_lines.append(f"span_len: {example['span_len']}")
         report_lines.append(f"solution_length: {example['solution_length']}")
@@ -328,6 +334,8 @@ def main():
     parser.add_argument("--presence_penalty", type=float, default=0.0)
     parser.add_argument("--max_new_tokens", type=int, default=8)
     parser.add_argument("--num_corrupt_spans", type=int, default=1)
+    parser.add_argument("--rollout_start_offset", type=int, default=2)
+    parser.add_argument("--rollout_start_offset_jitter", type=int, default=10)
     parser.add_argument(
         "--corrupt_span_choices",
         type=str,
@@ -349,6 +357,8 @@ def main():
     assert all(value > 0 for value in args.corrupt_span_choices), "corrupt_span_choices values must be positive"
     assert args.num_examples > 0, "num_examples must be positive"
     assert args.num_corrupt_spans > 0, "num_corrupt_spans must be positive"
+    assert args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
+    assert args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
     assert 0.0 <= args.corrupt_start_min_ratio <= args.corrupt_start_max_ratio <= 1.0, (
         "corrupt_start ratios must satisfy 0 <= min <= max <= 1"
     )

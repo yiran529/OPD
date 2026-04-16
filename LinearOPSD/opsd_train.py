@@ -63,6 +63,14 @@ class CustomScriptArguments(ScriptArguments):
         default=0.5,
         metadata={"help": "Maximum corruption start ratio within the solution for `linear_opsd`."},
     )
+    rollout_start_offset: int = field(
+        default=2,
+        metadata={"help": "Number of clean tokens kept after the last corrupted span before rollout starts."},
+    )
+    rollout_start_offset_jitter: int = field(
+        default=10,
+        metadata={"help": "Maximum absolute random jitter added to rollout_start_offset for each sample."},
+    )
     dataset_name: str = field(
         default="siyanzhao/Openthoughts_math_30k_opsd",
         metadata={"help": "Dataset name/path passed to `datasets.load_dataset`."},
@@ -156,6 +164,8 @@ if __name__ == "__main__":
         f"linear_opsd_alpha must be in [0, 1], got {script_args.linear_opsd_alpha}"
     )
     assert script_args.num_corrupt_spans > 0, "num_corrupt_spans must be positive"
+    assert script_args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
+    assert script_args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
     assert 0.0 <= script_args.corrupt_start_min_ratio <= script_args.corrupt_start_max_ratio <= 1.0, (
         "corrupt_start ratios must satisfy 0 <= min <= max <= 1"
     )
@@ -255,6 +265,8 @@ if __name__ == "__main__":
                 "linear_opsd_alpha": script_args.linear_opsd_alpha,
                 "num_corrupt_spans": script_args.num_corrupt_spans,
                 "corrupt_span_choices": corrupt_span_choices,
+                "rollout_start_offset": script_args.rollout_start_offset,
+                "rollout_start_offset_jitter": script_args.rollout_start_offset_jitter,
                 "use_tinker_loss": script_args.use_tinker_loss,
                 "fixed_teacher": script_args.fixed_teacher,
                 "top_k_loss": script_args.top_k_loss if script_args.top_k_loss > 0 else None,
@@ -347,6 +359,8 @@ if __name__ == "__main__":
         linear_opsd_alpha=script_args.linear_opsd_alpha,
         num_corrupt_spans=script_args.num_corrupt_spans,
         corrupt_span_choices=corrupt_span_choices,
+        rollout_start_offset=script_args.rollout_start_offset,
+        rollout_start_offset_jitter=script_args.rollout_start_offset_jitter,
         corrupt_start_min_ratio=script_args.corrupt_start_min_ratio,
         corrupt_start_max_ratio=script_args.corrupt_start_max_ratio,
         top_k_loss=script_args.top_k_loss if script_args.top_k_loss > 0 else None,
