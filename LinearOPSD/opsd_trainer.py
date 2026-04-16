@@ -120,6 +120,36 @@ class OPSDTrainer(SFTTrainer):
     _tag_names = ["trl", "opsd"]
     _name = "OPSD"
 
+    def _assert_train_vllm_model_alignment(self):
+        train_model = self.accelerator.unwrap_model(self.model)
+        if hasattr(train_model, "get_base_model"):
+            train_model = train_model.get_base_model()
+        train_class_name = train_model.__class__.__name__
+
+        engine = self.vllm_engine.llm_engine
+        try:
+            driver_model = engine.model_executor.driver_worker.model_runner.model
+        except Exception:
+            driver_model = None
+
+        if driver_model is not None:
+            vllm_class_name = driver_model.__class__.__name__
+        else:
+            model_config = getattr(engine, "model_config", None)
+            hf_config = getattr(model_config, "hf_config", None)
+            architectures = getattr(hf_config, "architectures", None) or getattr(model_config, "architectures", None)
+            vllm_class_name = architectures[0] if architectures else None
+
+        assert vllm_class_name is not None, "Failed to resolve vLLM model class name for fail-fast validation"
+        if train_class_name != vllm_class_name:
+            raise AssertionError(
+                "Training model class and vLLM model class do not match. "
+                f"train_class={train_class_name} vllm_class={vllm_class_name}. "
+                "This is unsafe for LoRA/vLLM sync; use a checkpoint/runtime path that resolves to the same class."
+            )
+
+        print(f"Model class alignment check passed: train_class={train_class_name} vllm_class={vllm_class_name}")
+
     def __init__(
         self,
         model: PreTrainedModel | nn.Module | str | None = None,
@@ -382,6 +412,7 @@ class OPSDTrainer(SFTTrainer):
                 # desynchronization and seems to lead to DeepSpeed hanging during initialization. To prevent this, we
                 # synchronize all processes after vLLM has been fully initialized.
                 self.accelerator.wait_for_everyone()
+                self._assert_train_vllm_model_alignment()
             else:
                 raise ValueError(f"Unknown vllm_mode: {self.vllm_mode}")
             self.vllm_guided_decoding_regex = args.vllm_guided_decoding_regex

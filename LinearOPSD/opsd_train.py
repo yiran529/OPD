@@ -2,7 +2,7 @@ import os
 import wandb
 
 from datasets import load_dataset
-from transformers import AutoTokenizer, GenerationConfig
+from transformers import AutoConfig, AutoTokenizer, GenerationConfig
 
 from trl import (
     LogCompletionsCallback,
@@ -19,6 +19,59 @@ from dataclasses import dataclass, field
 
 # Enable logging in a Hugging Face Space
 os.environ.setdefault("TRACKIO_SPACE_ID", "trl-trackio")
+
+
+QWEN35_LORA_TARGETS = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    "in_proj_qkv",
+    "in_proj_z",
+    "in_proj_a",
+    "in_proj_b",
+    "out_proj",
+]
+
+
+def _patch_qwen35_lora_targets(model_args):
+    if not getattr(model_args, "use_peft", False):
+        return
+
+    config = AutoConfig.from_pretrained(
+        model_args.model_name_or_path,
+        revision=model_args.model_revision,
+        trust_remote_code=model_args.trust_remote_code,
+    )
+    if getattr(config, "model_type", None) != "qwen3_5":
+        return
+
+    current_targets = getattr(model_args, "lora_target_modules", None)
+    if current_targets is None:
+        current_targets = []
+    elif isinstance(current_targets, str):
+        current_targets = [item.strip() for item in current_targets.split(",") if item.strip()]
+    else:
+        current_targets = [str(item).strip() for item in current_targets if str(item).strip()]
+
+    if not current_targets:
+        model_args.lora_target_modules = list(QWEN35_LORA_TARGETS)
+        print(
+            "Qwen3.5 detected. Setting LoRA target modules to: "
+            + ", ".join(model_args.lora_target_modules)
+        )
+        return
+
+    missing_targets = [target for target in QWEN35_LORA_TARGETS if target not in current_targets]
+    if missing_targets:
+        model_args.lora_target_modules = list(current_targets) + missing_targets
+        print(
+            "Qwen3.5 detected. Appended missing LoRA target modules: "
+            + ", ".join(missing_targets)
+        )
 
 
 @dataclass
@@ -152,6 +205,7 @@ class CustomScriptArguments(ScriptArguments):
 if __name__ == "__main__":
     parser = TrlParser((CustomScriptArguments, GOLDConfig, ModelConfig))
     script_args, training_args, model_args = parser.parse_args_and_config()
+    _patch_qwen35_lora_targets(model_args)
 
     assert script_args.conditioning_mode in {"opsd", "linear_opsd"}, (
         f"Unsupported conditioning_mode={script_args.conditioning_mode}"

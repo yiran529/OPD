@@ -458,3 +458,10 @@
 - New knobs: `rollout_start_offset` (current default `2`) and `rollout_start_offset_jitter` (current default `10`).
 - Effective rollout gap is now sampled per example as `base_offset + delta`, where `delta` is an integer jitter bounded by the configured max and clipped on the negative side so the final offset stays non-negative.
 - The offset is now threaded through both training (`opsd_train.py` / `opsd_trainer.py`) and inspection (`eval/inspect_linear_opsd_rollout.py`) so the reported prefix layout matches training-time behavior.
+
+## 2026-04-16-12:10 : Qwen3.5 LinearOPSD needs hybrid-aware LoRA targets and class-name fail-fast
+- Qwen3.5 LoRA targets in `LinearOPSD` must cover both legacy attention/MLP names and hybrid linear-attention projection names:
+  - `q_proj k_proj v_proj o_proj gate_proj up_proj down_proj`
+  - `in_proj_qkv in_proj_z in_proj_a in_proj_b out_proj`
+- `LinearOPSD/opsd_train.py` now auto-appends missing Qwen3.5 LoRA targets when `model_type == qwen3_5`.
+- `LinearOPSD/opsd_trainer.py` now fail-fasts if the training model class name and the colocated vLLM model class name do not match, because that mismatch is unsafe for LoRA merge/sync.

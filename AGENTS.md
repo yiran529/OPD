@@ -32,6 +32,7 @@ Read them when the task needs method context, codebase navigation, or prior impl
 Update `AI/code_map.md` after structural changes.
 Write to `AI/memory.md` only when a decision or lesson is likely to matter later.
 Do not use `AI/memory.md` as a scratchpad or raw experiment log.
+NOTE THAT NEW CONTENTS MUST WRITE AT THE VERY END IN `AI/memory.md`
 
 ---
 

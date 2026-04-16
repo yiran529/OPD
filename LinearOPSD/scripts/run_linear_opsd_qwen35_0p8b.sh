@@ -57,5 +57,5 @@ accelerate launch \
     --use_peft \
     --lora_r 64 \
     --lora_alpha 128 \
-    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj in_proj_qkv in_proj_z in_proj_a in_proj_b out_proj \
     --wandb_project LinearOPSD
