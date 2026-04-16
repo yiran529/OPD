@@ -67,6 +67,18 @@ def _sample_non_overlapping_starts(
     return sorted(selected)
 
 
+def _get_local_donor_positions(solution_length, corrupted_positions, span_start, span_len):
+    span_center = span_start + (span_len - 1) / 2.0
+    available_positions = [idx for idx in range(solution_length) if idx not in corrupted_positions]
+    assert available_positions, "No donor positions remain outside the corrupted spans"
+
+    sorted_positions = sorted(available_positions, key=lambda idx: (abs(idx - span_center), idx))
+    local_budget = min(len(sorted_positions), max(8, 4 * span_len))
+    local_positions = sorted_positions[:local_budget]
+    assert local_positions, "Failed to build a local donor pool"
+    return local_positions
+
+
 def _build_linear_opsd_prefixes(
     solution_ids,
     rollout_len,
@@ -96,14 +108,18 @@ def _build_linear_opsd_prefixes(
     corrupted_positions = {
         position for span_start in span_starts for position in range(span_start, span_start + span_len)
     }
-    donor_positions = [idx for idx in range(solution_length) if idx not in corrupted_positions]
-    assert donor_positions, "No donor positions remain outside the corrupted spans"
 
     corrupted_solution = list(solution_ids)
     clean_spans = []
     for span_start in span_starts:
         clean_tokens = list(solution_ids[span_start : span_start + span_len])
-        corrupted_tokens = [int(solution_ids[random.choice(donor_positions)]) for _ in range(span_len)]
+        local_donor_positions = _get_local_donor_positions(
+            solution_length=solution_length,
+            corrupted_positions=corrupted_positions,
+            span_start=span_start,
+            span_len=span_len,
+        )
+        corrupted_tokens = [int(solution_ids[random.choice(local_donor_positions)]) for _ in range(span_len)]
         corrupted_solution[span_start : span_start + span_len] = corrupted_tokens
         clean_spans.append((span_start, clean_tokens))
 

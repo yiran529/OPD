@@ -250,6 +250,11 @@ def _build_sampling_params(args):
     )
 
 
+def _append_section(report_lines, title, content):
+    report_lines.append(f"##### {title} #####")
+    report_lines.append(content)
+
+
 def _write_outputs(examples, output_jsonl):
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     output_txt = output_jsonl.with_suffix(".txt")
@@ -266,30 +271,25 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append(f"num_spans: {example['num_spans']}")
         report_lines.append(f"span_len: {example['span_len']}")
         report_lines.append(f"solution_length: {example['solution_length']}")
-        report_lines.append("problem:")
-        report_lines.append(example["problem"])
-        report_lines.append("clean_prefix_text:")
-        report_lines.append(example["clean_prefix_text"])
-        report_lines.append("student_prefix_text:")
-        report_lines.append(example["student_prefix_text"])
-        report_lines.append("student_prefix_annotated:")
-        report_lines.append(example["student_prefix_annotated"])
-        report_lines.append("teacher_prefix_text:")
-        report_lines.append(example["teacher_prefix_text"])
-        report_lines.append("teacher_prefix_annotated:")
-        report_lines.append(example["teacher_prefix_annotated"])
+        _append_section(report_lines, "problem", example["problem"])
+        _append_section(report_lines, "clean_prefix_text", example["clean_prefix_text"])
+        _append_section(report_lines, "student_prefix_text", example["student_prefix_text"])
+        _append_section(report_lines, "student_prefix_annotated", example["student_prefix_annotated"])
+        _append_section(report_lines, "teacher_prefix_text", example["teacher_prefix_text"])
+        _append_section(report_lines, "teacher_prefix_annotated", example["teacher_prefix_annotated"])
         report_lines.append("corrupted_spans:")
         for span in example["corrupted_spans"]:
             report_lines.append(
                 f"  start={span['start']} length={span['length']} "
                 f"corrupted={span['corrupted_text']!r} clean={span['clean_text']!r}"
             )
-        report_lines.append("rollout_text:")
-        report_lines.append(example["rollout_text"])
-        report_lines.append("rollout_annotated:")
-        report_lines.append(example["rollout_annotated"])
-        report_lines.append("student_prompt_plus_rollout_annotated:")
-        report_lines.append(example["student_prompt_plus_rollout_annotated"])
+        _append_section(report_lines, "rollout_text", example["rollout_text"])
+        _append_section(report_lines, "rollout_annotated", example["rollout_annotated"])
+        _append_section(
+            report_lines,
+            "student_prompt_plus_rollout_annotated",
+            example["student_prompt_plus_rollout_annotated"],
+        )
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
     return output_txt
