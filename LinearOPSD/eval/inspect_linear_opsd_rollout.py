@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 
 from datasets import load_dataset
-from vllm import SamplingParams
+from transformers import AutoTokenizer
+from vllm import LLM, SamplingParams
 
 CURRENT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = CURRENT_DIR.parent
@@ -15,7 +16,75 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from data_collator import _build_linear_opsd_prefixes, _build_problem_prompt_ids, _encode_solution_ids
-from evaluate_math import load_vllm_model
+
+
+def _get_vllm_cache_dtype(llm) -> str:
+    engine = llm.llm_engine
+
+    cache_config = getattr(engine, "cache_config", None)
+    if cache_config is None:
+        vllm_config = getattr(engine, "vllm_config", None)
+        cache_config = getattr(vllm_config, "cache_config", None)
+
+    cache_dtype = getattr(cache_config, "cache_dtype", None)
+    return str(cache_dtype) if cache_dtype is not None else "unavailable"
+
+
+def load_vllm_model(
+    base_model_path: str,
+    lora_adapter_path: str = None,
+    gpu_memory_utilization: float = 0.9,
+    tensor_parallel_size: int = 1,
+    max_model_len: int = None,
+    enable_thinking: bool = True,
+):
+    print(f"Loading model with vLLM from: {base_model_path}")
+
+    if max_model_len is None:
+        max_model_len = 40960 if enable_thinking else 32768
+        mode = "thinking" if enable_thinking else "non-thinking"
+        print(f"Auto-setting max_model_len to {max_model_len} for {mode} mode")
+
+    llm_config = {
+        "model": base_model_path,
+        "gpu_memory_utilization": gpu_memory_utilization,
+        "tensor_parallel_size": tensor_parallel_size,
+        "trust_remote_code": True,
+        "max_model_len": max_model_len,
+        "distributed_executor_backend": "mp",
+        "enforce_eager": True,
+    }
+
+    if lora_adapter_path is not None:
+        print(f"LoRA adapter path provided: {lora_adapter_path}")
+
+        adapter_path = Path(lora_adapter_path) / "adapter_model.safetensors"
+        if not adapter_path.exists():
+            adapter_path = Path(lora_adapter_path) / "adapter_model.bin"
+
+        if adapter_path.exists():
+            print("LoRA weights found. Enabling LoRA support...")
+            llm_config["enable_lora"] = True
+            llm_config["max_lora_rank"] = 64
+            llm_config["max_loras"] = 1
+            llm_config["max_cpu_loras"] = 1
+        else:
+            print(f"Warning: No LoRA weights found at {lora_adapter_path}")
+            print("Continuing with base model only...")
+
+    llm = LLM(**llm_config)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+
+    print("\n" + "=" * 70)
+    print("MODEL DTYPE INFORMATION")
+    print("=" * 70)
+    print(f"vLLM Model Config dtype: {llm.llm_engine.model_config.dtype}")
+    print(f"vLLM Model quantization: {llm.llm_engine.model_config.quantization}")
+    print(f"KV cache dtype: {_get_vllm_cache_dtype(llm)}")
+    print("=" * 70 + "\n")
+
+    print("vLLM model loaded successfully!")
+    return llm, tokenizer
 
 
 def _build_lora_request(checkpoint_dir):

@@ -86,6 +86,18 @@ def grade_answer(predicted: str, ground_truth: str) -> bool:
         return pred_norm == gt_norm
 
 
+def _get_vllm_cache_dtype(llm) -> str:
+    engine = llm.llm_engine
+
+    cache_config = getattr(engine, "cache_config", None)
+    if cache_config is None:
+        vllm_config = getattr(engine, "vllm_config", None)
+        cache_config = getattr(vllm_config, "cache_config", None)
+
+    cache_dtype = getattr(cache_config, "cache_dtype", None)
+    return str(cache_dtype) if cache_dtype is not None else "unavailable"
+
+
 def load_vllm_model(
     base_model_path: str,
     lora_adapter_path: str = None,
@@ -160,7 +172,7 @@ def load_vllm_model(
     print("=" * 70)
     print(f"vLLM Model Config dtype: {llm.llm_engine.model_config.dtype}")
     print(f"vLLM Model quantization: {llm.llm_engine.model_config.quantization}")
-    print(f"KV cache dtype: {llm.llm_engine.cache_config.cache_dtype}")
+    print(f"KV cache dtype: {_get_vllm_cache_dtype(llm)}")
     print("=" * 70 + "\n")
 
     print("vLLM model loaded successfully!")
@@ -366,7 +378,7 @@ def evaluate_math500(
     print("=" * 70)
     print(f"Model dtype: {llm.llm_engine.model_config.dtype}")
     print(f"Quantization: {llm.llm_engine.model_config.quantization}")
-    print(f"KV cache dtype: {llm.llm_engine.cache_config.cache_dtype}")
+    print(f"KV cache dtype: {_get_vllm_cache_dtype(llm)}")
     print(f"Using LoRA: {lora_request is not None}")
     if lora_request is not None:
         if lora_request.lora_path is None:

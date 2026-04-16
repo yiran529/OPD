@@ -6,13 +6,15 @@ import torch
 def _build_problem_prompt_ids(tokenizer, problem):
     user_message = f"Problem: {problem}\n\nPlease reason step by step, and put your final answer within \\boxed{{}}."
     messages = [{"role": "user", "content": user_message}]
-    prompt_ids = tokenizer.apply_chat_template(
+    prompt_text = tokenizer.apply_chat_template(
         messages,
-        tokenize=True,
+        tokenize=False,
         add_generation_prompt=True,
         enable_thinking=True,
     )
-    assert isinstance(prompt_ids, list) and prompt_ids, "chat template returned an empty prompt"
+    assert isinstance(prompt_text, str) and prompt_text.strip(), "chat template returned an empty prompt"
+    prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
+    assert isinstance(prompt_ids, list) and prompt_ids, "chat template text encoded to an empty prompt"
     return [int(token_id) for token_id in prompt_ids]
 
 
