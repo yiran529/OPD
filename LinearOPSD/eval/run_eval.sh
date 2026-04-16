@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_MODEL="/data0/shared/Qwen3-1.7B"
+BASE_MODEL="Qwen/Qwen3.5-0.8B"
 
 # evaluate base model performance
 NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python evaluate_math.py \
