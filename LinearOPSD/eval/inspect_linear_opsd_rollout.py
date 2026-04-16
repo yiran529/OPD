@@ -146,6 +146,31 @@ def _extract_corrupted_spans(tokenizer, student_prefix_ids, teacher_prefix_ids):
     return spans
 
 
+def _annotate_spans(tokenizer, token_ids, spans, tag_name):
+    if not spans:
+        return _decode_ids(tokenizer, token_ids)
+
+    chunks = []
+    cursor = 0
+    for span in spans:
+        start = span["start"]
+        end = span["end"]
+        assert 0 <= start <= end <= len(token_ids), f"Invalid span bounds: start={start} end={end}"
+
+        if cursor < start:
+            chunks.append(_decode_ids(tokenizer, token_ids[cursor:start]))
+
+        chunks.append(f"[[{tag_name} start={start} len={span['length']}]]")
+        chunks.append(_decode_ids(tokenizer, token_ids[start:end]))
+        chunks.append(f"[[/{tag_name}]]")
+        cursor = end
+
+    if cursor < len(token_ids):
+        chunks.append(_decode_ids(tokenizer, token_ids[cursor:]))
+
+    return "".join(chunks)
+
+
 def _prepare_examples(dataset, tokenizer, args):
     examples = []
     upper_bound = min(len(dataset), args.start_index + args.num_examples)
@@ -170,6 +195,8 @@ def _prepare_examples(dataset, tokenizer, args):
         student_prompt_ids = prompt_ids + student_prefix_ids
         teacher_prompt_ids = prompt_ids + teacher_prefix_ids
 
+        corrupted_spans = _extract_corrupted_spans(tokenizer, student_prefix_ids, teacher_prefix_ids)
+
         example = {
             "dataset_index": index,
             "problem": problem,
@@ -183,10 +210,12 @@ def _prepare_examples(dataset, tokenizer, args):
             "num_spans": corruption["num_spans"],
             "span_len": corruption["span_len"],
             "solution_length": corruption["solution_length"],
-            "corrupted_spans": _extract_corrupted_spans(tokenizer, student_prefix_ids, teacher_prefix_ids),
+            "corrupted_spans": corrupted_spans,
             "problem_prompt_text": _decode_ids(tokenizer, prompt_ids),
             "student_prefix_text": _decode_ids(tokenizer, student_prefix_ids),
             "teacher_prefix_text": _decode_ids(tokenizer, teacher_prefix_ids),
+            "student_prefix_annotated": _annotate_spans(tokenizer, student_prefix_ids, corrupted_spans, "CORRUPT"),
+            "teacher_prefix_annotated": _annotate_spans(tokenizer, teacher_prefix_ids, corrupted_spans, "PATCH"),
             "clean_prefix_text": _decode_ids(tokenizer, solution_ids[: corruption["rollout_start"]]),
             "student_prompt_text": _decode_ids(tokenizer, student_prompt_ids),
             "teacher_prompt_text": _decode_ids(tokenizer, teacher_prompt_ids),
@@ -243,8 +272,12 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append(example["clean_prefix_text"])
         report_lines.append("student_prefix_text:")
         report_lines.append(example["student_prefix_text"])
+        report_lines.append("student_prefix_annotated:")
+        report_lines.append(example["student_prefix_annotated"])
         report_lines.append("teacher_prefix_text:")
         report_lines.append(example["teacher_prefix_text"])
+        report_lines.append("teacher_prefix_annotated:")
+        report_lines.append(example["teacher_prefix_annotated"])
         report_lines.append("corrupted_spans:")
         for span in example["corrupted_spans"]:
             report_lines.append(
@@ -253,6 +286,10 @@ def _write_outputs(examples, output_jsonl):
             )
         report_lines.append("rollout_text:")
         report_lines.append(example["rollout_text"])
+        report_lines.append("rollout_annotated:")
+        report_lines.append(example["rollout_annotated"])
+        report_lines.append("student_prompt_plus_rollout_annotated:")
+        report_lines.append(example["student_prompt_plus_rollout_annotated"])
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
     return output_txt
@@ -342,7 +379,11 @@ def main():
         generated = output.outputs[0]
         example["rollout_text"] = generated.text
         example["rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
+        example["rollout_annotated"] = f"[[ROLLOUT]]{generated.text}[[/ROLLOUT]]"
         example["student_prompt_plus_rollout_text"] = example["student_prompt_text"] + generated.text
+        example["student_prompt_plus_rollout_annotated"] = (
+            example["problem_prompt_text"] + example["student_prefix_annotated"] + example["rollout_annotated"]
+        )
         example["decoding_mode"] = args.rollout_decoding
         example["checkpoint_dir"] = args.checkpoint_dir
         example["base_model"] = args.base_model
