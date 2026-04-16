@@ -1,6 +1,6 @@
-import random
-
 import torch
+
+from corruption import pad_token_sequences
 
 
 def _build_problem_prompt_ids(tokenizer, problem):
@@ -24,172 +24,20 @@ def _encode_solution_ids(tokenizer, solution):
     return [int(token_id) for token_id in solution_ids]
 
 
-def _sample_non_overlapping_starts(
-    solution_length,
-    span_len,
-    rollout_len,
-    rollout_start_offset,
-    num_spans,
-    start_min_ratio,
-    start_max_ratio,
-):
-    latest_start = solution_length - span_len - rollout_start_offset - rollout_len
-    assert latest_start >= 0, (
-        "solution is too short for the requested corruption + rollout: "
-        f"solution_length={solution_length} span_len={span_len} "
-        f"rollout_start_offset={rollout_start_offset} rollout_len={rollout_len}"
+def _build_linear_opsd_prefixes(*args, **kwargs):
+    raise NotImplementedError(
+        "linear_opsd corruption has moved to trainer-time logic in corruption.py; "
+        "the old collator-time span corruption path has been removed."
     )
-
-    start_min = min(int(solution_length * start_min_ratio), latest_start)
-    start_max = min(int(solution_length * start_max_ratio), latest_start)
-    assert start_max >= start_min, (
-        "No valid corruption start satisfies the configured ratios. "
-        f"solution_length={solution_length} span_len={span_len} rollout_len={rollout_len} "
-        f"start_min_ratio={start_min_ratio} start_max_ratio={start_max_ratio}"
-    )
-
-    candidate_starts = list(range(start_min, start_max + 1))
-    random.shuffle(candidate_starts)
-
-    selected = []
-    for start in candidate_starts:
-        overlaps = any(
-            not (start + span_len <= existing or existing + span_len <= start) for existing in selected
-        )
-        if overlaps:
-            continue
-        selected.append(start)
-        if len(selected) == num_spans:
-            break
-
-    assert len(selected) == num_spans, (
-        "Failed to sample the requested number of non-overlapping corruption spans. "
-        f"solution_length={solution_length} span_len={span_len} num_spans={num_spans}"
-    )
-    return sorted(selected)
-
-
-def _sample_rollout_start_offset(base_offset, offset_jitter):
-    assert base_offset >= 0, "rollout_start_offset must be non-negative"
-    assert offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
-
-    min_delta = -min(base_offset, offset_jitter)
-    max_delta = offset_jitter
-    sampled_delta = random.randint(min_delta, max_delta)
-    sampled_offset = base_offset + sampled_delta
-
-    assert sampled_offset >= 0, "sampled rollout_start_offset must be non-negative"
-    return sampled_offset, sampled_delta
-
-
-def _get_local_donor_positions(solution_length, corrupted_positions, span_start, span_len):
-    span_center = span_start + (span_len - 1) / 2.0
-    available_positions = [idx for idx in range(solution_length) if idx not in corrupted_positions]
-    assert available_positions, "No donor positions remain outside the corrupted spans"
-
-    sorted_positions = sorted(available_positions, key=lambda idx: (abs(idx - span_center), idx))
-    local_budget = min(len(sorted_positions), max(8, 4 * span_len))
-    local_positions = sorted_positions[:local_budget]
-    assert local_positions, "Failed to build a local donor pool"
-    return local_positions
-
-
-def _build_linear_opsd_prefixes(
-    solution_ids,
-    rollout_len,
-    rollout_start_offset,
-    rollout_start_offset_jitter,
-    num_spans,
-    span_choices,
-    start_min_ratio,
-    start_max_ratio,
-):
-    solution_length = len(solution_ids)
-    span_len = int(random.choice(span_choices))
-    assert span_len > 0, "sampled span_len must be positive"
-    sampled_rollout_start_offset, sampled_rollout_start_offset_delta = _sample_rollout_start_offset(
-        rollout_start_offset, rollout_start_offset_jitter
-    )
-    assert solution_length >= num_spans * span_len + sampled_rollout_start_offset + rollout_len, (
-        "solution is too short for corruption + rollout: "
-        f"solution_length={solution_length} span_len={span_len} "
-        f"num_spans={num_spans} rollout_start_offset={sampled_rollout_start_offset} rollout_len={rollout_len}"
-    )
-
-    span_starts = _sample_non_overlapping_starts(
-        solution_length=solution_length,
-        span_len=span_len,
-        rollout_len=rollout_len,
-        rollout_start_offset=sampled_rollout_start_offset,
-        num_spans=num_spans,
-        start_min_ratio=start_min_ratio,
-        start_max_ratio=start_max_ratio,
-    )
-
-    corrupted_positions = {
-        position for span_start in span_starts for position in range(span_start, span_start + span_len)
-    }
-
-    corrupted_solution = list(solution_ids)
-    clean_spans = []
-    for span_start in span_starts:
-        clean_tokens = list(solution_ids[span_start : span_start + span_len])
-        local_donor_positions = _get_local_donor_positions(
-            solution_length=solution_length,
-            corrupted_positions=corrupted_positions,
-            span_start=span_start,
-            span_len=span_len,
-        )
-        corrupted_tokens = [int(solution_ids[random.choice(local_donor_positions)]) for _ in range(span_len)]
-        corrupted_solution[span_start : span_start + span_len] = corrupted_tokens
-        clean_spans.append((span_start, clean_tokens))
-
-    rollout_start = max(span_start + span_len for span_start in span_starts) + sampled_rollout_start_offset
-    student_prefix_ids = corrupted_solution[:rollout_start]
-    teacher_prefix_ids = list(student_prefix_ids)
-    for span_start, clean_tokens in clean_spans:
-        teacher_prefix_ids[span_start : span_start + span_len] = clean_tokens
-
-    return {
-        "student_prefix_ids": student_prefix_ids,
-        "teacher_prefix_ids": teacher_prefix_ids,
-        "rollout_start": rollout_start,
-        "rollout_start_offset": sampled_rollout_start_offset,
-        "rollout_start_offset_delta": sampled_rollout_start_offset_delta,
-        "num_spans": num_spans,
-        "span_len": span_len,
-        "solution_length": solution_length,
-    }
-
-
-def _pad_sequences(sequences, pad_token_id):
-    lengths = [len(ids) for ids in sequences]
-    max_len = max(lengths)
-
-    padded = []
-    attention_masks = []
-    for ids in sequences:
-        pad_len = max_len - len(ids)
-        padded_ids = ids + [pad_token_id] * pad_len
-        attention_mask = [1] * len(ids) + [0] * pad_len
-        padded.append(padded_ids)
-        attention_masks.append(attention_mask)
-
-    return {
-        "input_ids": torch.tensor(padded, dtype=torch.long),
-        "attention_mask": torch.tensor(attention_masks, dtype=torch.long),
-        "lengths": torch.tensor(lengths, dtype=torch.long),
-        "max_len": max_len,
-    }
 
 
 class SelfDistillationDataCollator:
     """
-    Data collator for self-distillation that creates both student and teacher inputs.
+    Data collator for self-distillation.
 
-    `opsd` keeps the original privileged teacher prompt.
-    `linear_opsd` builds token-level corrupted and patched prefixes on top of the same
-    problem prompt so the trainer can keep using the same rollout plumbing.
+    `opsd` keeps the original privileged teacher prompt construction.
+    `linear_opsd` returns only static tokenized materials; corruption and prompt
+    construction are handled online inside the trainer.
     """
 
     def __init__(
@@ -201,8 +49,7 @@ class SelfDistillationDataCollator:
         rollout_len=128,
         rollout_start_offset=2,
         rollout_start_offset_jitter=10,
-        num_corrupt_spans=1,
-        corrupt_span_choices=None,
+        num_corrupt_points=1,
         corrupt_start_min_ratio=0.0,
         corrupt_start_max_ratio=0.5,
     ):
@@ -213,8 +60,7 @@ class SelfDistillationDataCollator:
         self.rollout_len = rollout_len
         self.rollout_start_offset = rollout_start_offset
         self.rollout_start_offset_jitter = rollout_start_offset_jitter
-        self.num_corrupt_spans = num_corrupt_spans
-        self.corrupt_span_choices = corrupt_span_choices or [2]
+        self.num_corrupt_points = num_corrupt_points
         self.corrupt_start_min_ratio = corrupt_start_min_ratio
         self.corrupt_start_max_ratio = corrupt_start_max_ratio
 
@@ -224,14 +70,12 @@ class SelfDistillationDataCollator:
         if self.conditioning_mode == "linear_opsd":
             assert not self.reason_first, "reason_first is incompatible with conditioning_mode=linear_opsd"
 
-        # Prompt for reasoning about the solution before teaching
         self.reason_first_prompt = (
             "\n\nThe reference reasoning above arrives at the correct answer. "
             "Please analyze this solution and explain the key reasoning steps and problem-solving strategies employed. "
             "Do NOT use <think> tags. Do NOT derive your own solution. "
             "Simply analyze and explain the reference solution provided above.\n"
         )
-        # Prompt for transitioning to teaching mode after reasoning
         self.transition_prompt = (
             "\n\nAfter reading the reference solution above, make sure you truly understand "
             "the reasoning behind each step — do not copy or paraphrase it. Now, using your "
@@ -252,64 +96,40 @@ class SelfDistillationDataCollator:
         return self._collate_opsd(features)
 
     def _collate_linear_opsd(self, features):
-        student_prompt_ids = []
-        teacher_prompt_ids = []
-        rollout_starts = []
-        num_spans = []
-        span_lens = []
-        solution_lengths = []
+        problems = []
+        solutions = []
+        problem_prompt_ids = []
+        solution_token_ids = []
 
         for feature in features:
             problem = feature["problem"]
             solution = feature["solution"]
 
             prompt_ids = _build_problem_prompt_ids(self.tokenizer, problem)
-            solution_ids = _encode_solution_ids(self.tokenizer, solution)
-            corruption = _build_linear_opsd_prefixes(
-                solution_ids=solution_ids,
-                rollout_len=self.rollout_len,
-                rollout_start_offset=self.rollout_start_offset,
-                rollout_start_offset_jitter=self.rollout_start_offset_jitter,
-                num_spans=self.num_corrupt_spans,
-                span_choices=self.corrupt_span_choices,
-                start_min_ratio=self.corrupt_start_min_ratio,
-                start_max_ratio=self.corrupt_start_max_ratio,
+            assert len(prompt_ids) <= self.max_length, (
+                "linear_opsd problem prompt exceeds max_length. "
+                f"prompt_len={len(prompt_ids)} max_length={self.max_length}"
             )
 
-            student_ids = prompt_ids + corruption["student_prefix_ids"]
-            teacher_ids = prompt_ids + corruption["teacher_prefix_ids"]
-            assert len(student_ids) <= self.max_length, (
-                "linear_opsd student prompt exceeds max_length. "
-                f"prompt_len={len(student_ids)} max_length={self.max_length}"
-            )
-            assert len(teacher_ids) <= self.max_length, (
-                "linear_opsd teacher prompt exceeds max_length. "
-                f"prompt_len={len(teacher_ids)} max_length={self.max_length}"
-            )
+            problems.append(problem)
+            solutions.append(solution)
+            problem_prompt_ids.append(prompt_ids)
+            solution_token_ids.append(_encode_solution_ids(self.tokenizer, solution))
 
-            student_prompt_ids.append(student_ids)
-            teacher_prompt_ids.append(teacher_ids)
-            rollout_starts.append(corruption["rollout_start"])
-            num_spans.append(corruption["num_spans"])
-            span_lens.append(corruption["span_len"])
-            solution_lengths.append(corruption["solution_length"])
-
-        student_padded = _pad_sequences(student_prompt_ids, self.tokenizer.pad_token_id)
-        teacher_padded = _pad_sequences(teacher_prompt_ids, self.tokenizer.pad_token_id)
+        problem_padded = pad_token_sequences(problem_prompt_ids, self.tokenizer.pad_token_id)
+        solution_padded = pad_token_sequences(solution_token_ids, self.tokenizer.pad_token_id)
 
         return {
-            "student_prompts": student_padded["input_ids"],
-            "student_prompt_attention_mask": student_padded["attention_mask"],
-            "student_prompt_length": student_padded["max_len"],
-            "student_prompt_lengths_per_example": student_padded["lengths"],
-            "teacher_prompts": teacher_padded["input_ids"],
-            "teacher_prompt_attention_mask": teacher_padded["attention_mask"],
-            "teacher_prompt_length": teacher_padded["max_len"],
-            "teacher_prompt_lengths_per_example": teacher_padded["lengths"],
-            "rollout_start": torch.tensor(rollout_starts, dtype=torch.long),
-            "num_spans": torch.tensor(num_spans, dtype=torch.long),
-            "span_len": torch.tensor(span_lens, dtype=torch.long),
-            "solution_length": torch.tensor(solution_lengths, dtype=torch.long),
+            "problems": problems,
+            "solutions": solutions,
+            "problem_prompt_ids": problem_padded["input_ids"],
+            "problem_prompt_attention_mask": problem_padded["attention_mask"],
+            "problem_prompt_length": problem_padded["max_len"],
+            "problem_prompt_lengths_per_example": problem_padded["lengths"],
+            "solution_ids": solution_padded["input_ids"],
+            "solution_attention_mask": solution_padded["attention_mask"],
+            "solution_length": solution_padded["max_len"],
+            "solution_lengths_per_example": solution_padded["lengths"],
         }
 
     def _collate_opsd(self, features):

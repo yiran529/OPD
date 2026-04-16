@@ -19,10 +19,10 @@ NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python inspect_linear_opsd_rollo
     --top_p 1.0 \
     --top_k 0 \
     --max_new_tokens 8 \
-    --num_corrupt_spans 1 \
+    --num_corrupt_points 1 \
+    --corrupt_marker_text "<corrupt>" \
     --rollout_start_offset 2 \
     --rollout_start_offset_jitter 10 \
-    --corrupt_span_choices 2 \
     --corrupt_start_min_ratio 0.0 \
     --corrupt_start_max_ratio 0.5 \
     --output_jsonl "$OUTPUT_DIR/linear_opsd_rollout_inspect_base.jsonl"
@@ -44,10 +44,10 @@ wait
 #     --top_p 1.0 \
 #     --top_k 0 \
 #     --max_new_tokens 8 \
-#     --num_corrupt_spans 1 \
+#     --num_corrupt_points 1 \
+#     --corrupt_marker_text "<corrupt>" \
 #     --rollout_start_offset 2 \
 #     --rollout_start_offset_jitter 10 \
-#     --corrupt_span_choices 2 \
 #     --corrupt_start_min_ratio 0.0 \
 #     --corrupt_start_max_ratio 0.5 \
 #     --output_jsonl "$OUTPUT_DIR/linear_opsd_rollout_inspect_ckpt.jsonl"

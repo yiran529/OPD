@@ -61,6 +61,7 @@ from trl.trainer.utils import (
     pad,
 )
 from trl.experimental.gold.gold_config import GOLDConfig
+from corruption import build_online_corruption, pad_token_sequences
 from data_collator import SelfDistillationDataCollator
 
 
@@ -172,8 +173,8 @@ class OPSDTrainer(SFTTrainer):
         loss_mode: str = "jsd",
         rollout_decoding: str = "sample",
         linear_opsd_alpha: float = 1.0,
-        num_corrupt_spans: int = 1,
-        corrupt_span_choices: list[int] | None = None,
+        num_corrupt_points: int = 1,
+        corrupt_marker_text: str = "<corrupt>",
         rollout_start_offset: int = 2,
         rollout_start_offset_jitter: int = 10,
         corrupt_start_min_ratio: float = 0.0,
@@ -197,8 +198,7 @@ class OPSDTrainer(SFTTrainer):
                 reason_first=reason_first,
                 conditioning_mode=conditioning_mode,
                 rollout_len=args.max_completion_length,
-                num_corrupt_spans=num_corrupt_spans,
-                corrupt_span_choices=corrupt_span_choices,
+                num_corrupt_points=num_corrupt_points,
                 rollout_start_offset=rollout_start_offset,
                 rollout_start_offset_jitter=rollout_start_offset_jitter,
                 corrupt_start_min_ratio=corrupt_start_min_ratio,
@@ -234,6 +234,12 @@ class OPSDTrainer(SFTTrainer):
         self.loss_mode = "tinker" if use_thinking_machines_loss else loss_mode
         self.rollout_decoding = rollout_decoding
         self.linear_opsd_alpha = linear_opsd_alpha
+        self.num_corrupt_points = num_corrupt_points
+        self.corrupt_marker_text = corrupt_marker_text
+        self.rollout_start_offset = rollout_start_offset
+        self.rollout_start_offset_jitter = rollout_start_offset_jitter
+        self.corrupt_start_min_ratio = corrupt_start_min_ratio
+        self.corrupt_start_max_ratio = corrupt_start_max_ratio
         self.top_k_loss = top_k_loss
         self.jsd_token_clip = jsd_token_clip
         self.use_ema_teacher = use_ema_teacher
@@ -720,6 +726,108 @@ class OPSDTrainer(SFTTrainer):
                 for name, param in unwrapped.named_parameters():
                     if name in saved:
                         param.data = saved[name]
+
+    def _build_linear_opsd_clean_batch(self, inputs):
+        clean_sequences = []
+        for i in range(len(inputs["problems"])):
+            problem_len = int(inputs["problem_prompt_lengths_per_example"][i].item())
+            solution_len = int(inputs["solution_lengths_per_example"][i].item())
+            problem_ids = inputs["problem_prompt_ids"][i, :problem_len].tolist()
+            solution_ids = inputs["solution_ids"][i, :solution_len].tolist()
+            clean_sequences.append(problem_ids + solution_ids)
+
+        padded = pad_token_sequences(clean_sequences, self.processing_class.pad_token_id)
+        return {
+            "input_ids": padded["input_ids"].to(self.accelerator.device),
+            "attention_mask": padded["attention_mask"].to(self.accelerator.device),
+        }
+
+    def _prepare_linear_opsd_inputs(self, model, inputs):
+        clean_batch = self._build_linear_opsd_clean_batch(inputs)
+        with torch.no_grad():
+            clean_outputs = model(
+                input_ids=clean_batch["input_ids"],
+                attention_mask=clean_batch["attention_mask"],
+            )
+
+        student_prompt_sequences = []
+        teacher_prompt_texts = []
+        corruption_metadata = []
+
+        for i in range(len(inputs["problems"])):
+            problem = inputs["problems"][i]
+            solution = inputs["solutions"][i]
+            problem_len = int(inputs["problem_prompt_lengths_per_example"][i].item())
+            solution_len = int(inputs["solution_lengths_per_example"][i].item())
+            problem_prompt_ids = inputs["problem_prompt_ids"][i, :problem_len].tolist()
+            solution_ids = inputs["solution_ids"][i, :solution_len].tolist()
+            solution_logits = clean_outputs.logits[i, problem_len - 1 : problem_len + solution_len - 1, :]
+
+            corruption = build_online_corruption(
+                tokenizer=self.processing_class,
+                problem=problem,
+                solution=solution,
+                problem_prompt_ids=problem_prompt_ids,
+                solution_ids=solution_ids,
+                solution_logits=solution_logits,
+                num_corrupt_points=self.num_corrupt_points,
+                rollout_start_offset=self.rollout_start_offset,
+                rollout_start_offset_jitter=self.rollout_start_offset_jitter,
+                corrupt_start_min_ratio=self.corrupt_start_min_ratio,
+                corrupt_start_max_ratio=self.corrupt_start_max_ratio,
+                corrupt_marker_text=self.corrupt_marker_text,
+            )
+
+            assert len(corruption["student_prompt_ids"]) <= self.args.max_length, (
+                "linear_opsd student prompt exceeds max_length. "
+                f"prompt_len={len(corruption['student_prompt_ids'])} max_length={self.args.max_length}"
+            )
+
+            teacher_messages = [{"role": "user", "content": corruption["teacher_user_message"]}]
+            teacher_prompt_text = self.processing_class.apply_chat_template(
+                teacher_messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=True,
+            )
+
+            student_prompt_sequences.append(corruption["student_prompt_ids"])
+            teacher_prompt_texts.append(teacher_prompt_text)
+            corruption_metadata.append(corruption)
+
+        student_padded = pad_token_sequences(student_prompt_sequences, self.processing_class.pad_token_id)
+        teacher_encoded_no_pad = self.processing_class(
+            teacher_prompt_texts,
+            padding=False,
+            truncation=True,
+            max_length=self.args.max_length,
+        )
+        teacher_prompt_lengths = [len(ids) for ids in teacher_encoded_no_pad["input_ids"]]
+        max_teacher_prompt_len = max(teacher_prompt_lengths)
+        teacher_encoded = self.processing_class(
+            teacher_prompt_texts,
+            padding="max_length",
+            truncation=True,
+            max_length=max_teacher_prompt_len,
+            return_tensors="pt",
+        )
+
+        inputs["student_prompts"] = student_padded["input_ids"].to(self.accelerator.device)
+        inputs["student_prompt_attention_mask"] = student_padded["attention_mask"].to(self.accelerator.device)
+        inputs["student_prompt_length"] = int(student_padded["max_len"])
+        inputs["student_prompt_lengths_per_example"] = student_padded["lengths"].to(self.accelerator.device)
+        inputs["teacher_prompts"] = teacher_encoded["input_ids"].to(self.accelerator.device)
+        inputs["teacher_prompt_attention_mask"] = teacher_encoded["attention_mask"].to(self.accelerator.device)
+        inputs["teacher_prompt_length"] = max_teacher_prompt_len
+        inputs["teacher_prompt_lengths_per_example"] = torch.tensor(
+            teacher_prompt_lengths,
+            dtype=torch.long,
+            device=self.accelerator.device,
+        )
+        inputs["linear_opsd_corruption"] = corruption_metadata
+
+        del clean_outputs
+        empty_cache()
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """
@@ -1416,6 +1524,9 @@ class OPSDTrainer(SFTTrainer):
         3. Compute JSD loss on the generation tokens
         """
         on_policy = True
+
+        if self.conditioning_mode == "linear_opsd":
+            self._prepare_linear_opsd_inputs(model, inputs)
 
         # === REASONING PHASE (if enabled) ===
         if self.reason_first:

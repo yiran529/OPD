@@ -15,7 +15,7 @@ if str(CURRENT_DIR) not in sys.path:
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from data_collator import _build_linear_opsd_prefixes, _build_problem_prompt_ids, _encode_solution_ids
+from data_collator import _build_problem_prompt_ids, _encode_solution_ids
 
 
 def _get_vllm_cache_dtype(llm) -> str:
@@ -172,62 +172,10 @@ def _annotate_spans(tokenizer, token_ids, spans, tag_name):
 
 
 def _prepare_examples(dataset, tokenizer, args):
-    examples = []
-    upper_bound = min(len(dataset), args.start_index + args.num_examples)
-    for index in range(args.start_index, upper_bound):
-        feature = dataset[index]
-        problem = feature["problem"]
-        solution = feature["solution"]
-
-        prompt_ids = _build_problem_prompt_ids(tokenizer, problem)
-        solution_ids = _encode_solution_ids(tokenizer, solution)
-        corruption = _build_linear_opsd_prefixes(
-            solution_ids=solution_ids,
-            rollout_len=args.max_new_tokens,
-            rollout_start_offset=args.rollout_start_offset,
-            rollout_start_offset_jitter=args.rollout_start_offset_jitter,
-            num_spans=args.num_corrupt_spans,
-            span_choices=args.corrupt_span_choices,
-            start_min_ratio=args.corrupt_start_min_ratio,
-            start_max_ratio=args.corrupt_start_max_ratio,
-        )
-
-        student_prefix_ids = corruption["student_prefix_ids"]
-        teacher_prefix_ids = corruption["teacher_prefix_ids"]
-        student_prompt_ids = prompt_ids + student_prefix_ids
-        teacher_prompt_ids = prompt_ids + teacher_prefix_ids
-
-        corrupted_spans = _extract_corrupted_spans(tokenizer, student_prefix_ids, teacher_prefix_ids)
-
-        example = {
-            "dataset_index": index,
-            "problem": problem,
-            "solution": solution,
-            "prompt_ids": prompt_ids,
-            "student_prefix_ids": student_prefix_ids,
-            "teacher_prefix_ids": teacher_prefix_ids,
-            "student_prompt_ids": student_prompt_ids,
-            "teacher_prompt_ids": teacher_prompt_ids,
-            "rollout_start": corruption["rollout_start"],
-            "rollout_start_offset": corruption["rollout_start_offset"],
-            "rollout_start_offset_delta": corruption["rollout_start_offset_delta"],
-            "num_spans": corruption["num_spans"],
-            "span_len": corruption["span_len"],
-            "solution_length": corruption["solution_length"],
-            "corrupted_spans": corrupted_spans,
-            "problem_prompt_text": _decode_ids(tokenizer, prompt_ids),
-            "student_prefix_text": _decode_ids(tokenizer, student_prefix_ids),
-            "teacher_prefix_text": _decode_ids(tokenizer, teacher_prefix_ids),
-            "student_prefix_annotated": _annotate_spans(tokenizer, student_prefix_ids, corrupted_spans, "CORRUPT"),
-            "teacher_prefix_annotated": _annotate_spans(tokenizer, teacher_prefix_ids, corrupted_spans, "PATCH"),
-            "clean_prefix_text": _decode_ids(tokenizer, solution_ids[: corruption["rollout_start"]]),
-            "student_prompt_text": _decode_ids(tokenizer, student_prompt_ids),
-            "teacher_prompt_text": _decode_ids(tokenizer, teacher_prompt_ids),
-        }
-        examples.append(example)
-
-    assert examples, "No examples selected for inspection"
-    return examples
+    raise NotImplementedError(
+        "inspect_linear_opsd_rollout.py still targets the removed collator-time span corruption path. "
+        "It needs a dedicated rewrite for trainer-time entropy-based point corruption."
+    )
 
 
 def _build_sampling_params(args):
@@ -333,15 +281,10 @@ def main():
     parser.add_argument("--min_p", type=float, default=0.0)
     parser.add_argument("--presence_penalty", type=float, default=0.0)
     parser.add_argument("--max_new_tokens", type=int, default=8)
-    parser.add_argument("--num_corrupt_spans", type=int, default=1)
+    parser.add_argument("--num_corrupt_points", type=int, default=1)
+    parser.add_argument("--corrupt_marker_text", type=str, default="<corrupt>")
     parser.add_argument("--rollout_start_offset", type=int, default=2)
     parser.add_argument("--rollout_start_offset_jitter", type=int, default=10)
-    parser.add_argument(
-        "--corrupt_span_choices",
-        type=str,
-        default="2",
-        help="Comma-separated candidate span lengths, e.g. `2` or `2,4`.",
-    )
     parser.add_argument("--corrupt_start_min_ratio", type=float, default=0.0)
     parser.add_argument("--corrupt_start_max_ratio", type=float, default=0.5)
     parser.add_argument(
@@ -352,11 +295,9 @@ def main():
     )
     args = parser.parse_args()
 
-    args.corrupt_span_choices = [int(value.strip()) for value in args.corrupt_span_choices.split(",") if value.strip()]
-    assert args.corrupt_span_choices, "corrupt_span_choices must contain at least one positive integer"
-    assert all(value > 0 for value in args.corrupt_span_choices), "corrupt_span_choices values must be positive"
     assert args.num_examples > 0, "num_examples must be positive"
-    assert args.num_corrupt_spans > 0, "num_corrupt_spans must be positive"
+    assert args.num_corrupt_points > 0, "num_corrupt_points must be positive"
+    assert args.corrupt_marker_text.strip(), "corrupt_marker_text must be non-empty"
     assert args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
     assert args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
     assert 0.0 <= args.corrupt_start_min_ratio <= args.corrupt_start_max_ratio <= 1.0, (

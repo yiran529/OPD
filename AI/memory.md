@@ -465,3 +465,19 @@
   - `in_proj_qkv in_proj_z in_proj_a in_proj_b out_proj`
 - `LinearOPSD/opsd_train.py` now auto-appends missing Qwen3.5 LoRA targets when `model_type == qwen3_5`.
 - `LinearOPSD/opsd_trainer.py` now fail-fasts if the training model class name and the colocated vLLM model class name do not match, because that mismatch is unsafe for LoRA merge/sync.
+
+## 2026-04-17-10:20 : LinearOPSD corruption moved to trainer-time point corruption submodule
+- `LinearOPSD` no longer uses collator-time random span corruption for `conditioning_mode=linear_opsd`.
+- New file `LinearOPSD/corruption.py` owns the corruption-specific logic:
+  - high-entropy point selection on the clean solution trajectory,
+  - heuristic style-token filtering,
+  - top-1 non-gold replacement-token selection,
+  - inline `<corrupt>` marker injection for the teacher-visible student trace,
+  - teacher user-message construction,
+  - generic token padding helpers.
+- `LinearOPSD/data_collator.py` now leaves `linear_opsd` corruption untouched and only returns static tokenized materials (`problem` prompt ids and `solution` ids).
+- `LinearOPSD/opsd_trainer.py` now performs an extra no-grad clean forward inside `training_step`, builds the online corruption from current model logits, then reuses the existing shared-rollout generation + distillation path.
+- Old training-time span-corruption fields were removed from the `linear_opsd` CLI surface and replaced by point-corruption fields:
+  - removed: `num_corrupt_spans`, `corrupt_span_choices`
+  - added: `num_corrupt_points`, `corrupt_marker_text`
+- Current inspection scripts are not yet aligned with the new trainer-time corruption path and need a dedicated rewrite instead of reusing the removed collator helper path.

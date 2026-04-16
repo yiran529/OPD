@@ -82,7 +82,7 @@ class CustomScriptArguments(ScriptArguments):
         default="opsd",
         metadata={
             "help": "Prompt-conditioning path. `opsd` keeps the original privileged-prompt setup; "
-            "`linear_opsd` uses corrupted student solution prefixes and patched teacher prefixes."
+            "`linear_opsd` uses trainer-time entropy-based corruption with privileged teacher traces."
         },
     )
     loss_mode: str = field(
@@ -100,13 +100,13 @@ class CustomScriptArguments(ScriptArguments):
         default=1.0,
         metadata={"help": "Forward/reverse KL mixing coefficient used by `loss_mode=mixed_kl`."},
     )
-    num_corrupt_spans: int = field(
+    num_corrupt_points: int = field(
         default=1,
-        metadata={"help": "Number of non-overlapping corrupted spans for `conditioning_mode=linear_opsd`."},
+        metadata={"help": "Number of entropy-selected corruption points for `conditioning_mode=linear_opsd`."},
     )
-    corrupt_span_choices: str = field(
-        default="2",
-        metadata={"help": "Comma-separated candidate span lengths for `linear_opsd` corruption."},
+    corrupt_marker_text: str = field(
+        default="<corrupt>",
+        metadata={"help": "Inline marker inserted before each corrupted token in the teacher-visible trace."},
     )
     corrupt_start_min_ratio: float = field(
         default=0.0,
@@ -118,7 +118,7 @@ class CustomScriptArguments(ScriptArguments):
     )
     rollout_start_offset: int = field(
         default=2,
-        metadata={"help": "Number of clean tokens kept after the last corrupted span before rollout starts."},
+        metadata={"help": "Number of clean tokens kept after the last corruption point before rollout starts."},
     )
     rollout_start_offset_jitter: int = field(
         default=10,
@@ -217,22 +217,19 @@ if __name__ == "__main__":
     assert 0.0 <= script_args.linear_opsd_alpha <= 1.0, (
         f"linear_opsd_alpha must be in [0, 1], got {script_args.linear_opsd_alpha}"
     )
-    assert script_args.num_corrupt_spans > 0, "num_corrupt_spans must be positive"
+    assert script_args.num_corrupt_points > 0, "num_corrupt_points must be positive"
     assert script_args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
     assert script_args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
     assert 0.0 <= script_args.corrupt_start_min_ratio <= script_args.corrupt_start_max_ratio <= 1.0, (
         "corrupt_start ratios must satisfy 0 <= min <= max <= 1"
     )
+    assert script_args.corrupt_marker_text.strip(), "corrupt_marker_text must be non-empty"
     if script_args.use_tinker_loss:
         assert script_args.loss_mode == "jsd", (
             "use_tinker_loss is a legacy alternative loss path and cannot be combined with loss_mode!=jsd"
         )
     if script_args.conditioning_mode == "linear_opsd":
         assert not script_args.reason_first, "reason_first is incompatible with conditioning_mode=linear_opsd"
-
-    corrupt_span_choices = [int(value.strip()) for value in script_args.corrupt_span_choices.split(",") if value.strip()]
-    assert corrupt_span_choices, "corrupt_span_choices must contain at least one positive integer"
-    assert all(value > 0 for value in corrupt_span_choices), "corrupt_span_choices values must be positive"
 
     ################
     # WandB Run Name & Output Directory
@@ -317,10 +314,12 @@ if __name__ == "__main__":
                 "loss_mode": "tinker" if script_args.use_tinker_loss else script_args.loss_mode,
                 "rollout_decoding": script_args.rollout_decoding,
                 "linear_opsd_alpha": script_args.linear_opsd_alpha,
-                "num_corrupt_spans": script_args.num_corrupt_spans,
-                "corrupt_span_choices": corrupt_span_choices,
+                "num_corrupt_points": script_args.num_corrupt_points,
+                "corrupt_marker_text": script_args.corrupt_marker_text,
                 "rollout_start_offset": script_args.rollout_start_offset,
                 "rollout_start_offset_jitter": script_args.rollout_start_offset_jitter,
+                "corrupt_start_min_ratio": script_args.corrupt_start_min_ratio,
+                "corrupt_start_max_ratio": script_args.corrupt_start_max_ratio,
                 "use_tinker_loss": script_args.use_tinker_loss,
                 "fixed_teacher": script_args.fixed_teacher,
                 "top_k_loss": script_args.top_k_loss if script_args.top_k_loss > 0 else None,
@@ -411,8 +410,8 @@ if __name__ == "__main__":
         loss_mode=script_args.loss_mode,
         rollout_decoding=script_args.rollout_decoding,
         linear_opsd_alpha=script_args.linear_opsd_alpha,
-        num_corrupt_spans=script_args.num_corrupt_spans,
-        corrupt_span_choices=corrupt_span_choices,
+        num_corrupt_points=script_args.num_corrupt_points,
+        corrupt_marker_text=script_args.corrupt_marker_text,
         rollout_start_offset=script_args.rollout_start_offset,
         rollout_start_offset_jitter=script_args.rollout_start_offset_jitter,
         corrupt_start_min_ratio=script_args.corrupt_start_min_ratio,

@@ -122,14 +122,15 @@
 - `scripts/compare_gsm8k_thought_reveal.py`: compares two GSM8K reveal-eval `metrics.json` files and reports `delta_Gap_25/50/75`.
 
 ## LinearOPSD
-- `LinearOPSD/opsd_train.py`: upstream OPSD training entry, now extended with `conditioning_mode`, `loss_mode`, rollout decoding, corruption controls, and configurable dataset selection so the same script can run original OPSD or `linear_opsd`.
-- `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; adds token-level `linear_opsd` collation that builds `problem + corrupted solution prefix` for student and `problem + patched prefix` for teacher.
-- `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; now also supports `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, and greedy-vs-sampling rollout control while keeping the existing generation / EMA / vLLM infrastructure.
+- `LinearOPSD/opsd_train.py`: upstream OPSD training entry, now extended with `conditioning_mode`, `loss_mode`, rollout decoding, point-corruption controls (`num_corrupt_points`, `<corrupt>` marker, rollout offset window), and configurable dataset selection so the same script can run original OPSD or `linear_opsd`.
+- `LinearOPSD/corruption.py`: trainer-time entropy-based point-corruption helpers for `linear_opsd`, including style-token filtering, high-entropy position selection, wrong-token replacement, `<corrupt>` trace injection, teacher user-message construction, and generic token-sequence padding.
+- `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; `linear_opsd` now only tokenizes static materials (`problem` prompt ids and `solution` ids) and leaves corruption/prompt construction to trainer time.
+- `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; `conditioning_mode=linear_opsd` now performs an extra no-grad clean forward, calls `LinearOPSD/corruption.py` online to build student/teacher prompts, then reuses the shared-rollout generation and mixed-KL supervision path.
 - `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
-- `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility that reconstructs training-time `linear_opsd` corrupted/patched prefixes and shows the resulting student rollout continuation.
+- `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection script currently marked as needing a rewrite for the new trainer-time entropy-based point-corruption path; old collator-time span corruption has been removed.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
-- `LinearOPSD/eval/run_inspect_rollout.sh`: simple launcher for corrupted-prefix rollout inspection.
-- `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/5.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, sampling rollout, and LoRA + colocated vLLM.
+- `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the inspection script; argument names are updated to the point-corruption configuration surface, but the script itself still needs a full rewrite.
+- `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, entropy-based point corruption, sampling rollout, and LoRA + colocated vLLM.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.
