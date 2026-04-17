@@ -288,19 +288,13 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
         example = {
             "dataset_index": index,
             "problem": problem,
-            "solution_text": _decode_ids(tokenizer, solution_ids),
-            "gold_prefix_text": _decode_ids(tokenizer, rollout["gold_prefix_ids"]),
-            "careless_prefix_text": _decode_ids(tokenizer, rollout["careless_token_ids"]),
-            "gold_target_text": _decode_ids(tokenizer, rollout["gold_target_ids"]),
-            "student_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
-            "teacher_trace_prefix_text": rollout["teacher_trace_prefix_text"],
-            "teacher_prompt_text": teacher_prompt_text,
+            "student_seen_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
+            "teacher_seen_prefix_text": teacher_prompt_text,
             "gold_prefix_length": int(rollout["gold_prefix_length"]),
             "careless_prefix_length": len(rollout["careless_token_ids"]),
             "careless_deviated": bool(rollout["careless_deviated"]),
             "careless_resample_count": int(rollout["careless_resample_count"]),
             "skip_kd": bool(rollout["skip_kd"]),
-            "student_prompt_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
         }
         examples.append(example)
 
@@ -355,16 +349,12 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append("=" * 120)
         report_lines.append(f"EXAMPLE {example['dataset_index']}")
         report_lines.append("=" * 120)
-        _append_block(report_lines, "Problem", example["problem"])
-        _append_block(report_lines, "Gold Solution", example["solution_text"])
-        _append_block(report_lines, "Gold Prefix", example["gold_prefix_text"])
-        _append_block(report_lines, "Gold Careless Target", example["gold_target_text"])
-        _append_block(report_lines, "Careless Prefix", example["careless_prefix_text"])
         _append_block(report_lines, "Metadata", _format_rollout_block(example))
-        _append_block(report_lines, "Student Prefix", example["student_prefix_text"])
-        _append_block(report_lines, "Teacher Trace Prefix", example["teacher_trace_prefix_text"])
+        _append_block(report_lines, "Student Seen Prefix", example["student_seen_prefix_text"])
+        _append_block(report_lines, "Teacher Seen Prefix", example["teacher_seen_prefix_text"])
         _append_block(report_lines, "Recovery Rollout", example.get("recovery_rollout_text", ""))
-        _append_block(report_lines, "Teacher Trace Full", example.get("teacher_trace_full_text", ""))
+        _append_block(report_lines, "Student Full", example.get("student_full_text", ""))
+        _append_block(report_lines, "Teacher Full", example.get("teacher_full_text", ""))
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
     return output_txt
@@ -451,7 +441,7 @@ def main():
     examples = _prepare_examples(dataset, tokenizer, hf_model, args.hf_device, args)
 
     sampling_params = _build_sampling_params(args)
-    prompts = [example["student_prompt_text"] for example in examples]
+    prompts = [example["student_seen_prefix_text"] for example in examples]
     if lora_request is not None:
         outputs = llm.generate(prompts, sampling_params, lora_request=lora_request, use_tqdm=True)
     else:
@@ -461,7 +451,8 @@ def main():
         generated = output.outputs[0]
         example["recovery_rollout_text"] = generated.text
         example["recovery_rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
-        example["teacher_trace_full_text"] = example["teacher_trace_prefix_text"] + generated.text
+        example["student_full_text"] = example["student_seen_prefix_text"] + generated.text
+        example["teacher_full_text"] = example["teacher_seen_prefix_text"] + generated.text
         example["checkpoint_dir"] = args.checkpoint_dir
         example["base_model"] = args.base_model
 
