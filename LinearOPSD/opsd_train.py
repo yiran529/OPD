@@ -82,7 +82,7 @@ class CustomScriptArguments(ScriptArguments):
         default="opsd",
         metadata={
             "help": "Prompt-conditioning path. `opsd` keeps the original privileged-prompt setup; "
-            "`linear_opsd` uses trainer-time entropy-based corruption with privileged teacher traces."
+            "`linear_opsd` uses trainer-time gold-prefix -> careless-prefix -> recovery rollout distillation."
         },
     )
     loss_mode: str = field(
@@ -100,29 +100,49 @@ class CustomScriptArguments(ScriptArguments):
         default=1.0,
         metadata={"help": "Forward/reverse KL mixing coefficient used by `loss_mode=mixed_kl`."},
     )
-    num_corrupt_points: int = field(
-        default=1,
-        metadata={"help": "Number of entropy-selected corruption points for `conditioning_mode=linear_opsd`."},
+    gold_prefix_ratio_min: float = field(
+        default=0.3,
+        metadata={"help": "Minimum ratio for sampling the gold prefix length in `conditioning_mode=linear_opsd`."},
     )
-    corrupt_marker_text: str = field(
-        default="<corrupt>",
-        metadata={"help": "Inline marker inserted before each corrupted token in the teacher-visible trace."},
+    gold_prefix_ratio_max: float = field(
+        default=0.7,
+        metadata={"help": "Maximum ratio for sampling the gold prefix length in `conditioning_mode=linear_opsd`."},
     )
-    corrupt_start_min_ratio: float = field(
-        default=0.0,
-        metadata={"help": "Minimum corruption start ratio within the solution for `linear_opsd`."},
+    careless_rollout_len: int = field(
+        default=8,
+        metadata={"help": "Number of careless decoding tokens generated after the gold prefix."},
     )
-    corrupt_start_max_ratio: float = field(
-        default=0.5,
-        metadata={"help": "Maximum corruption start ratio within the solution for `linear_opsd`."},
+    careless_temperature: float = field(
+        default=1.3,
+        metadata={"help": "Sampling temperature for the careless rollout segment."},
     )
-    rollout_start_offset: int = field(
-        default=2,
-        metadata={"help": "Number of clean tokens kept after the last corruption point before rollout starts."},
+    careless_top_p: float = field(
+        default=0.95,
+        metadata={"help": "Top-p used for the careless rollout segment."},
     )
-    rollout_start_offset_jitter: int = field(
-        default=10,
-        metadata={"help": "Maximum absolute random jitter added to rollout_start_offset for each sample."},
+    careless_top_k: int = field(
+        default=50,
+        metadata={"help": "Top-k used for the careless rollout segment. Use 0 to disable top-k truncation."},
+    )
+    careless_resample_trials: int = field(
+        default=3,
+        metadata={"help": "Maximum resampling attempts when the careless segment matches the gold suffix."},
+    )
+    recovery_rollout_len: int = field(
+        default=8,
+        metadata={"help": "Recovery rollout length. This also defines the KD supervision length."},
+    )
+    normal_decoding: str = field(
+        default="greedy",
+        metadata={"help": "Decoding used for the recovery rollout. Initial implementation supports `greedy` only."},
+    )
+    careless_marker_text: str = field(
+        default="<careless>",
+        metadata={"help": "Inline marker inserted before the careless prefix in the teacher-visible trace."},
+    )
+    recovery_marker_text: str = field(
+        default="<recovery>",
+        metadata={"help": "Inline marker inserted before the recovery rollout in the teacher-visible trace."},
     )
     dataset_name: str = field(
         default="siyanzhao/Openthoughts_math_30k_opsd",
@@ -217,19 +237,25 @@ if __name__ == "__main__":
     assert 0.0 <= script_args.linear_opsd_alpha <= 1.0, (
         f"linear_opsd_alpha must be in [0, 1], got {script_args.linear_opsd_alpha}"
     )
-    assert script_args.num_corrupt_points > 0, "num_corrupt_points must be positive"
-    assert script_args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
-    assert script_args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
-    assert 0.0 <= script_args.corrupt_start_min_ratio <= script_args.corrupt_start_max_ratio <= 1.0, (
-        "corrupt_start ratios must satisfy 0 <= min <= max <= 1"
+    assert 0.0 <= script_args.gold_prefix_ratio_min <= script_args.gold_prefix_ratio_max <= 1.0, (
+        "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
     )
-    assert script_args.corrupt_marker_text.strip(), "corrupt_marker_text must be non-empty"
+    assert script_args.careless_rollout_len > 0, "careless_rollout_len must be positive"
+    assert script_args.careless_temperature > 0.0, "careless_temperature must be positive"
+    assert 0.0 < script_args.careless_top_p <= 1.0, "careless_top_p must be in (0, 1]"
+    assert script_args.careless_top_k >= 0, "careless_top_k must be non-negative"
+    assert script_args.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
+    assert script_args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
+    assert script_args.normal_decoding in {"greedy"}, f"Unsupported normal_decoding={script_args.normal_decoding}"
+    assert script_args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
+    assert script_args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
     if script_args.use_tinker_loss:
         assert script_args.loss_mode == "jsd", (
             "use_tinker_loss is a legacy alternative loss path and cannot be combined with loss_mode!=jsd"
         )
     if script_args.conditioning_mode == "linear_opsd":
         assert not script_args.reason_first, "reason_first is incompatible with conditioning_mode=linear_opsd"
+        training_args.max_completion_length = script_args.recovery_rollout_len
 
     ################
     # WandB Run Name & Output Directory
@@ -314,12 +340,17 @@ if __name__ == "__main__":
                 "loss_mode": "tinker" if script_args.use_tinker_loss else script_args.loss_mode,
                 "rollout_decoding": script_args.rollout_decoding,
                 "linear_opsd_alpha": script_args.linear_opsd_alpha,
-                "num_corrupt_points": script_args.num_corrupt_points,
-                "corrupt_marker_text": script_args.corrupt_marker_text,
-                "rollout_start_offset": script_args.rollout_start_offset,
-                "rollout_start_offset_jitter": script_args.rollout_start_offset_jitter,
-                "corrupt_start_min_ratio": script_args.corrupt_start_min_ratio,
-                "corrupt_start_max_ratio": script_args.corrupt_start_max_ratio,
+                "gold_prefix_ratio_min": script_args.gold_prefix_ratio_min,
+                "gold_prefix_ratio_max": script_args.gold_prefix_ratio_max,
+                "careless_rollout_len": script_args.careless_rollout_len,
+                "careless_temperature": script_args.careless_temperature,
+                "careless_top_p": script_args.careless_top_p,
+                "careless_top_k": script_args.careless_top_k if script_args.careless_top_k > 0 else None,
+                "careless_resample_trials": script_args.careless_resample_trials,
+                "recovery_rollout_len": script_args.recovery_rollout_len,
+                "normal_decoding": script_args.normal_decoding,
+                "careless_marker_text": script_args.careless_marker_text,
+                "recovery_marker_text": script_args.recovery_marker_text,
                 "use_tinker_loss": script_args.use_tinker_loss,
                 "fixed_teacher": script_args.fixed_teacher,
                 "top_k_loss": script_args.top_k_loss if script_args.top_k_loss > 0 else None,
@@ -410,12 +441,17 @@ if __name__ == "__main__":
         loss_mode=script_args.loss_mode,
         rollout_decoding=script_args.rollout_decoding,
         linear_opsd_alpha=script_args.linear_opsd_alpha,
-        num_corrupt_points=script_args.num_corrupt_points,
-        corrupt_marker_text=script_args.corrupt_marker_text,
-        rollout_start_offset=script_args.rollout_start_offset,
-        rollout_start_offset_jitter=script_args.rollout_start_offset_jitter,
-        corrupt_start_min_ratio=script_args.corrupt_start_min_ratio,
-        corrupt_start_max_ratio=script_args.corrupt_start_max_ratio,
+        gold_prefix_ratio_min=script_args.gold_prefix_ratio_min,
+        gold_prefix_ratio_max=script_args.gold_prefix_ratio_max,
+        careless_rollout_len=script_args.careless_rollout_len,
+        careless_temperature=script_args.careless_temperature,
+        careless_top_p=script_args.careless_top_p,
+        careless_top_k=script_args.careless_top_k,
+        careless_resample_trials=script_args.careless_resample_trials,
+        recovery_rollout_len=script_args.recovery_rollout_len,
+        normal_decoding=script_args.normal_decoding,
+        careless_marker_text=script_args.careless_marker_text,
+        recovery_marker_text=script_args.recovery_marker_text,
         top_k_loss=script_args.top_k_loss if script_args.top_k_loss > 0 else None,
         jsd_token_clip=script_args.jsd_token_clip if script_args.jsd_token_clip > 0 else None,
         use_ema_teacher=script_args.use_ema_teacher,
@@ -423,10 +459,16 @@ if __name__ == "__main__":
     )
 
     if training_args.eval_strategy != "no":
+        callback_do_sample = script_args.rollout_decoding == "sample"
+        callback_temperature = training_args.temperature if callback_do_sample else 1.0
+        if script_args.conditioning_mode == "linear_opsd":
+            callback_do_sample = False
+            callback_temperature = 1.0
+
         generation_config = GenerationConfig(
             max_new_tokens=training_args.max_completion_length,
-            do_sample=script_args.rollout_decoding == "sample",
-            temperature=training_args.temperature if script_args.rollout_decoding == "sample" else 1.0,
+            do_sample=callback_do_sample,
+            temperature=callback_temperature,
         )
         completions_callback = LogCompletionsCallback(trainer, generation_config, num_prompts=8)
         trainer.add_callback(completions_callback)

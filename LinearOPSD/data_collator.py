@@ -47,22 +47,12 @@ class SelfDistillationDataCollator:
         reason_first=True,
         conditioning_mode="opsd",
         rollout_len=128,
-        rollout_start_offset=2,
-        rollout_start_offset_jitter=10,
-        num_corrupt_points=1,
-        corrupt_start_min_ratio=0.0,
-        corrupt_start_max_ratio=0.5,
     ):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.reason_first = reason_first
         self.conditioning_mode = conditioning_mode
         self.rollout_len = rollout_len
-        self.rollout_start_offset = rollout_start_offset
-        self.rollout_start_offset_jitter = rollout_start_offset_jitter
-        self.num_corrupt_points = num_corrupt_points
-        self.corrupt_start_min_ratio = corrupt_start_min_ratio
-        self.corrupt_start_max_ratio = corrupt_start_max_ratio
 
         assert self.conditioning_mode in {"opsd", "linear_opsd"}, (
             f"Unsupported conditioning_mode={self.conditioning_mode}"

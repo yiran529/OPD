@@ -18,7 +18,7 @@ if str(CURRENT_DIR) not in sys.path:
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from corruption import build_online_corruption, is_style_token
+from corruption import build_online_careless_prefix
 from data_collator import _build_problem_prompt_ids, _encode_solution_ids
 
 
@@ -91,19 +91,19 @@ def load_vllm_model(
     return llm, tokenizer
 
 
-def load_hf_model_for_corruption(
+def load_hf_model_for_prefix_build(
     base_model_path: str,
     tokenizer,
     checkpoint_dir: str = None,
     device: str = "cpu",
 ):
-    print(f"Loading HF model for corruption scoring from: {base_model_path} on {device}")
+    print(f"Loading HF model for careless-prefix generation from: {base_model_path} on {device}")
     config = AutoConfig.from_pretrained(
         base_model_path,
         trust_remote_code=True,
     )
     architectures = list(getattr(config, "architectures", None) or [])
-    print(f"HF corruption model config.architectures = {architectures or ['<missing>']}")
+    print(f"HF model config.architectures = {architectures or ['<missing>']}")
 
     transformers_module = importlib.import_module("transformers")
     model_class = None
@@ -168,7 +168,7 @@ def load_hf_model_for_corruption(
             output_loading_info=True,
         )
 
-    print(f"HF corruption model class = {selected_arch}")
+    print(f"HF model class = {selected_arch}")
     missing = list(loading_info.get("missing_keys", []) or [])
     unexpected = list(loading_info.get("unexpected_keys", []) or [])
     mismatched = list(loading_info.get("mismatched_keys", []) or [])
@@ -184,8 +184,7 @@ def load_hf_model_for_corruption(
         if errors:
             preview.append(f"error_msgs={errors[:4]}")
         raise RuntimeError(
-            "HF corruption-scoring model did not load cleanly. "
-            "This usually means the selected architecture class does not match the checkpoint structure. "
+            "HF careless-prefix model did not load cleanly. "
             + " | ".join(preview)
         )
 
@@ -197,10 +196,10 @@ def load_hf_model_for_corruption(
                 from peft import PeftModel
 
                 model = PeftModel.from_pretrained(model, checkpoint_dir)
-                print(f"Loaded LoRA adapter into HF scoring model from: {checkpoint_dir}")
+                print(f"Loaded LoRA adapter into HF model from: {checkpoint_dir}")
             except Exception as exc:
                 warnings.warn(
-                    f"Failed to load LoRA adapter into HF scoring model ({exc}); falling back to base model only"
+                    f"Failed to load LoRA adapter into HF model ({exc}); falling back to base model only"
                 )
 
     model.to(device)
@@ -231,26 +230,6 @@ def _decode_ids(tokenizer, token_ids):
     return tokenizer.decode(token_ids, skip_special_tokens=False)
 
 
-def _format_corruption_details(tokenizer, solution_ids, corruption):
-    details = []
-    entropies = corruption["entropies"]
-    replacement_token_ids = corruption["replacement_token_ids"]
-    for pos, replacement_id in zip(corruption["corruption_positions"], replacement_token_ids):
-        gold_id = int(solution_ids[pos])
-        details.append(
-            {
-                "position": int(pos),
-                "entropy": float(entropies[pos].item()),
-                "gold_token_id": gold_id,
-                "gold_token_text": _decode_ids(tokenizer, [gold_id]),
-                "replacement_token_id": int(replacement_id),
-                "replacement_token_text": _decode_ids(tokenizer, [replacement_id]),
-                "is_style_token_gold": bool(is_style_token(tokenizer, gold_id)),
-            }
-        )
-    return details
-
-
 def _prepare_examples(dataset, tokenizer, hf_model, device, args):
     examples = []
     upper_bound = min(len(dataset), args.start_index + args.num_examples)
@@ -262,34 +241,27 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
 
         problem_prompt_ids = _build_problem_prompt_ids(tokenizer, problem)
         solution_ids = _encode_solution_ids(tokenizer, solution)
-        clean_input_ids = torch.tensor([problem_prompt_ids + solution_ids], dtype=torch.long, device=device)
-        clean_attention_mask = torch.ones_like(clean_input_ids)
 
-        with torch.no_grad():
-            outputs = hf_model(
-                input_ids=clean_input_ids,
-                attention_mask=clean_attention_mask,
-            )
-        solution_logits = outputs.logits[0, len(problem_prompt_ids) - 1 : len(problem_prompt_ids) + len(solution_ids) - 1, :]
+        rollout = build_online_careless_prefix(
+            model=hf_model,
+            tokenizer=tokenizer,
+            problem=problem,
+            solution=solution,
+            problem_prompt_ids=problem_prompt_ids,
+            solution_ids=solution_ids,
+            gold_prefix_ratio_min=args.gold_prefix_ratio_min,
+            gold_prefix_ratio_max=args.gold_prefix_ratio_max,
+            careless_rollout_len=args.careless_rollout_len,
+            careless_temperature=args.careless_temperature,
+            careless_top_p=args.careless_top_p,
+            careless_top_k=args.careless_top_k,
+            careless_resample_trials=args.careless_resample_trials,
+            careless_marker_text=args.careless_marker_text,
+            recovery_marker_text=args.recovery_marker_text,
+            device=device,
+        )
 
-        with warnings.catch_warnings(record=True) as warning_records:
-            warnings.simplefilter("always")
-            corruption = build_online_corruption(
-                tokenizer=tokenizer,
-                problem=problem,
-                solution=solution,
-                problem_prompt_ids=problem_prompt_ids,
-                solution_ids=solution_ids,
-                solution_logits=solution_logits,
-                num_corrupt_points=args.num_corrupt_points,
-                rollout_start_offset=args.rollout_start_offset,
-                rollout_start_offset_jitter=args.rollout_start_offset_jitter,
-                corrupt_start_min_ratio=args.corrupt_start_min_ratio,
-                corrupt_start_max_ratio=args.corrupt_start_max_ratio,
-                corrupt_marker_text=args.corrupt_marker_text,
-            )
-
-        teacher_messages = [{"role": "user", "content": corruption["teacher_user_message"]}]
+        teacher_messages = [{"role": "user", "content": rollout["teacher_user_message"]}]
         teacher_prompt_text = tokenizer.apply_chat_template(
             teacher_messages,
             tokenize=False,
@@ -301,17 +273,18 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             "dataset_index": index,
             "problem": problem,
             "solution_text": _decode_ids(tokenizer, solution_ids),
-            "student_prefix_text": _decode_ids(tokenizer, corruption["corrupted_prefix_ids"]),
-            "teacher_trace_text": corruption["teacher_trace_text"],
-            "rollout_start": int(corruption["rollout_start"]),
-            "rollout_start_offset": int(corruption["rollout_start_offset"]),
-            "rollout_start_offset_delta": int(corruption["rollout_start_offset_delta"]),
-            "solution_length": len(solution_ids),
-            "num_corrupt_points_requested": int(args.num_corrupt_points),
-            "num_corrupt_points_actual": len(corruption["corruption_positions"]),
-            "corruption_points": _format_corruption_details(tokenizer, solution_ids, corruption),
-            "warnings": [str(record.message) for record in warning_records],
-            "student_prompt_text": _decode_ids(tokenizer, corruption["student_prompt_ids"]),
+            "gold_prefix_text": _decode_ids(tokenizer, rollout["gold_prefix_ids"]),
+            "careless_prefix_text": _decode_ids(tokenizer, rollout["careless_token_ids"]),
+            "gold_target_text": _decode_ids(tokenizer, rollout["gold_target_ids"]),
+            "student_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
+            "teacher_trace_prefix_text": rollout["teacher_trace_prefix_text"],
+            "teacher_prompt_text": teacher_prompt_text,
+            "gold_prefix_length": int(rollout["gold_prefix_length"]),
+            "careless_prefix_length": len(rollout["careless_token_ids"]),
+            "careless_deviated": bool(rollout["careless_deviated"]),
+            "careless_resample_count": int(rollout["careless_resample_count"]),
+            "skip_kd": bool(rollout["skip_kd"]),
+            "student_prompt_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
         }
         examples.append(example)
 
@@ -320,27 +293,18 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
 
 
 def _build_sampling_params(args):
-    if args.rollout_decoding == "greedy":
+    if args.normal_decoding == "greedy":
         return SamplingParams(
             temperature=0.0,
             top_p=1.0,
             top_k=-1,
             min_p=0.0,
-            max_tokens=args.max_new_tokens,
+            max_tokens=args.recovery_rollout_len,
             presence_penalty=0.0,
             n=1,
         )
 
-    top_k = args.top_k if args.top_k and args.top_k > 0 else -1
-    return SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=top_k,
-        min_p=args.min_p,
-        max_tokens=args.max_new_tokens,
-        presence_penalty=args.presence_penalty,
-        n=1,
-    )
+    raise AssertionError(f"Unsupported normal_decoding={args.normal_decoding}")
 
 
 def _append_block(report_lines, title, content):
@@ -349,30 +313,16 @@ def _append_block(report_lines, title, content):
     report_lines.append(content if content else "(empty)")
 
 
-def _format_corruption_block(example):
-    lines = [
-        f"rollout_start: {example['rollout_start']}",
-        f"rollout_start_offset: {example['rollout_start_offset']}",
-        f"rollout_start_offset_delta: {example['rollout_start_offset_delta']}",
-        f"num_corrupt_points: {example['num_corrupt_points_actual']} / requested {example['num_corrupt_points_requested']}",
-    ]
-    if example["corruption_points"]:
-        lines.append("")
-        for idx, point in enumerate(example["corruption_points"], start=1):
-            lines.append(
-                f"[{idx}] pos={point['position']} entropy={point['entropy']:.4f} "
-                f"gold={point['gold_token_text']!r} -> repl={point['replacement_token_text']!r}"
-            )
-    else:
-        lines.append("")
-        lines.append("No corruption points selected.")
-
-    if example["warnings"]:
-        lines.append("")
-        lines.append("warnings:")
-        for warning_text in example["warnings"]:
-            lines.append(f"- {warning_text}")
-    return "\n".join(lines)
+def _format_rollout_block(example):
+    return "\n".join(
+        [
+            f"gold_prefix_length: {example['gold_prefix_length']}",
+            f"careless_prefix_length: {example['careless_prefix_length']}",
+            f"careless_deviated: {example['careless_deviated']}",
+            f"careless_resample_count: {example['careless_resample_count']}",
+            f"skip_kd: {example['skip_kd']}",
+        ]
+    )
 
 
 def _write_outputs(examples, output_jsonl):
@@ -391,10 +341,14 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append("=" * 120)
         _append_block(report_lines, "Problem", example["problem"])
         _append_block(report_lines, "Gold Solution", example["solution_text"])
-        _append_block(report_lines, "Corruption", _format_corruption_block(example))
+        _append_block(report_lines, "Gold Prefix", example["gold_prefix_text"])
+        _append_block(report_lines, "Gold Careless Target", example["gold_target_text"])
+        _append_block(report_lines, "Careless Prefix", example["careless_prefix_text"])
+        _append_block(report_lines, "Metadata", _format_rollout_block(example))
         _append_block(report_lines, "Student Prefix", example["student_prefix_text"])
-        _append_block(report_lines, "Teacher Trace", example["teacher_trace_text"])
-        _append_block(report_lines, "Rollout", example.get("rollout_text", ""))
+        _append_block(report_lines, "Teacher Trace Prefix", example["teacher_trace_prefix_text"])
+        _append_block(report_lines, "Recovery Rollout", example.get("recovery_rollout_text", ""))
+        _append_block(report_lines, "Teacher Trace Full", example.get("teacher_trace_full_text", ""))
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
     return output_txt
@@ -402,7 +356,7 @@ def _write_outputs(examples, output_jsonl):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Inspect trainer-time entropy-based LinearOPSD corruption and student rollouts on math reasoning data."
+        description="Inspect trainer-time LinearOPSD gold-prefix/careless-prefix/recovery rollouts on math reasoning data."
     )
     parser.add_argument("--base_model", type=str, required=True, help="Base model path for vLLM inference.")
     parser.add_argument(
@@ -420,25 +374,23 @@ def main():
     parser.add_argument("--dataset_split", type=str, default="train", help="Dataset split to inspect.")
     parser.add_argument("--num_examples", type=int, default=8, help="Number of examples to inspect.")
     parser.add_argument("--start_index", type=int, default=0, help="Starting dataset index.")
-    parser.add_argument("--seed", type=int, default=1234, help="Random seed for corruption sampling.")
+    parser.add_argument("--seed", type=int, default=1234, help="Random seed for careless sampling.")
     parser.add_argument("--enable_thinking", action="store_true", help="Enable Qwen thinking-mode context length.")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9)
     parser.add_argument("--tensor_parallel_size", type=int, default=1)
     parser.add_argument("--max_model_len", type=int, default=None)
-    parser.add_argument("--corruption_device", type=str, default="cpu", help="Device for HF corruption scoring model.")
-    parser.add_argument("--rollout_decoding", choices=["sample", "greedy"], default="sample")
-    parser.add_argument("--temperature", type=float, default=1.0)
-    parser.add_argument("--top_p", type=float, default=1.0)
-    parser.add_argument("--top_k", type=int, default=0)
-    parser.add_argument("--min_p", type=float, default=0.0)
-    parser.add_argument("--presence_penalty", type=float, default=0.0)
-    parser.add_argument("--max_new_tokens", type=int, default=8)
-    parser.add_argument("--num_corrupt_points", type=int, default=1)
-    parser.add_argument("--corrupt_marker_text", type=str, default="<corrupt>")
-    parser.add_argument("--rollout_start_offset", type=int, default=2)
-    parser.add_argument("--rollout_start_offset_jitter", type=int, default=10)
-    parser.add_argument("--corrupt_start_min_ratio", type=float, default=0.0)
-    parser.add_argument("--corrupt_start_max_ratio", type=float, default=0.5)
+    parser.add_argument("--hf_device", type=str, default="cpu", help="Device for the HF careless-prefix model.")
+    parser.add_argument("--gold_prefix_ratio_min", type=float, default=0.3)
+    parser.add_argument("--gold_prefix_ratio_max", type=float, default=0.7)
+    parser.add_argument("--careless_rollout_len", type=int, default=8)
+    parser.add_argument("--careless_temperature", type=float, default=1.3)
+    parser.add_argument("--careless_top_p", type=float, default=0.95)
+    parser.add_argument("--careless_top_k", type=int, default=50)
+    parser.add_argument("--careless_resample_trials", type=int, default=3)
+    parser.add_argument("--normal_decoding", choices=["greedy"], default="greedy")
+    parser.add_argument("--recovery_rollout_len", type=int, default=8)
+    parser.add_argument("--careless_marker_text", type=str, default="<careless>")
+    parser.add_argument("--recovery_marker_text", type=str, default="<recovery>")
     parser.add_argument(
         "--output_jsonl",
         type=str,
@@ -448,13 +400,17 @@ def main():
     args = parser.parse_args()
 
     assert args.num_examples > 0, "num_examples must be positive"
-    assert args.num_corrupt_points > 0, "num_corrupt_points must be positive"
-    assert args.corrupt_marker_text.strip(), "corrupt_marker_text must be non-empty"
-    assert args.rollout_start_offset >= 0, "rollout_start_offset must be non-negative"
-    assert args.rollout_start_offset_jitter >= 0, "rollout_start_offset_jitter must be non-negative"
-    assert 0.0 <= args.corrupt_start_min_ratio <= args.corrupt_start_max_ratio <= 1.0, (
-        "corrupt_start ratios must satisfy 0 <= min <= max <= 1"
+    assert 0.0 <= args.gold_prefix_ratio_min <= args.gold_prefix_ratio_max <= 1.0, (
+        "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
     )
+    assert args.careless_rollout_len > 0, "careless_rollout_len must be positive"
+    assert args.careless_temperature > 0.0, "careless_temperature must be positive"
+    assert 0.0 < args.careless_top_p <= 1.0, "careless_top_p must be in (0, 1]"
+    assert args.careless_top_k >= 0, "careless_top_k must be non-negative"
+    assert args.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
+    assert args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
+    assert args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
+    assert args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -468,15 +424,15 @@ def main():
         enable_thinking=args.enable_thinking,
     )
     lora_request = _build_lora_request(args.checkpoint_dir)
-    hf_model = load_hf_model_for_corruption(
+    hf_model = load_hf_model_for_prefix_build(
         args.base_model,
         tokenizer=tokenizer,
         checkpoint_dir=args.checkpoint_dir,
-        device=args.corruption_device,
+        device=args.hf_device,
     )
 
     dataset = load_dataset(args.dataset_name, split=args.dataset_split)
-    examples = _prepare_examples(dataset, tokenizer, hf_model, args.corruption_device, args)
+    examples = _prepare_examples(dataset, tokenizer, hf_model, args.hf_device, args)
 
     sampling_params = _build_sampling_params(args)
     prompts = [example["student_prompt_text"] for example in examples]
@@ -487,9 +443,9 @@ def main():
 
     for example, output in zip(examples, outputs):
         generated = output.outputs[0]
-        example["rollout_text"] = generated.text
-        example["rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
-        example["decoding_mode"] = args.rollout_decoding
+        example["recovery_rollout_text"] = generated.text
+        example["recovery_rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
+        example["teacher_trace_full_text"] = example["teacher_trace_prefix_text"] + generated.text
         example["checkpoint_dir"] = args.checkpoint_dir
         example["base_model"] = args.base_model
 

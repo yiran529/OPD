@@ -14,17 +14,17 @@ NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python inspect_linear_opsd_rollo
     --seed 1234 \
     --enable_thinking \
     --tensor_parallel_size 4 \
-    --rollout_decoding sample \
-    --temperature 1.0 \
-    --top_p 1.0 \
-    --top_k 0 \
-    --max_new_tokens 8 \
-    --num_corrupt_points 1 \
-    --corrupt_marker_text "<corrupt>" \
-    --rollout_start_offset 2 \
-    --rollout_start_offset_jitter 10 \
-    --corrupt_start_min_ratio 0.0 \
-    --corrupt_start_max_ratio 0.5 \
+    --gold_prefix_ratio_min 0.3 \
+    --gold_prefix_ratio_max 0.7 \
+    --careless_rollout_len 8 \
+    --careless_temperature 1.3 \
+    --careless_top_p 0.95 \
+    --careless_top_k 50 \
+    --careless_resample_trials 3 \
+    --normal_decoding greedy \
+    --recovery_rollout_len 8 \
+    --careless_marker_text "<careless>" \
+    --recovery_marker_text "<recovery>" \
     --output_jsonl "$OUTPUT_DIR/linear_opsd_rollout_inspect_base.jsonl"
 wait
 
@@ -39,16 +39,16 @@ wait
 #     --seed 1234 \
 #     --enable_thinking \
 #     --tensor_parallel_size 4 \
-#     --rollout_decoding sample \
-#     --temperature 1.0 \
-#     --top_p 1.0 \
-#     --top_k 0 \
-#     --max_new_tokens 8 \
-#     --num_corrupt_points 1 \
-#     --corrupt_marker_text "<corrupt>" \
-#     --rollout_start_offset 2 \
-#     --rollout_start_offset_jitter 10 \
-#     --corrupt_start_min_ratio 0.0 \
-#     --corrupt_start_max_ratio 0.5 \
+#     --gold_prefix_ratio_min 0.3 \
+#     --gold_prefix_ratio_max 0.7 \
+#     --careless_rollout_len 8 \
+#     --careless_temperature 1.3 \
+#     --careless_top_p 0.95 \
+#     --careless_top_k 50 \
+#     --careless_resample_trials 3 \
+#     --normal_decoding greedy \
+#     --recovery_rollout_len 8 \
+#     --careless_marker_text "<careless>" \
+#     --recovery_marker_text "<recovery>" \
 #     --output_jsonl "$OUTPUT_DIR/linear_opsd_rollout_inspect_ckpt.jsonl"
 # wait

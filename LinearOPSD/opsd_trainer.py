@@ -61,7 +61,7 @@ from trl.trainer.utils import (
     pad,
 )
 from trl.experimental.gold.gold_config import GOLDConfig
-from corruption import build_online_corruption, pad_token_sequences
+from corruption import build_online_careless_prefix, pad_token_sequences
 from data_collator import SelfDistillationDataCollator
 
 
@@ -173,12 +173,17 @@ class OPSDTrainer(SFTTrainer):
         loss_mode: str = "jsd",
         rollout_decoding: str = "sample",
         linear_opsd_alpha: float = 1.0,
-        num_corrupt_points: int = 1,
-        corrupt_marker_text: str = "<corrupt>",
-        rollout_start_offset: int = 2,
-        rollout_start_offset_jitter: int = 10,
-        corrupt_start_min_ratio: float = 0.0,
-        corrupt_start_max_ratio: float = 0.5,
+        gold_prefix_ratio_min: float = 0.3,
+        gold_prefix_ratio_max: float = 0.7,
+        careless_rollout_len: int = 8,
+        careless_temperature: float = 1.3,
+        careless_top_p: float = 0.95,
+        careless_top_k: int = 50,
+        careless_resample_trials: int = 3,
+        recovery_rollout_len: int = 8,
+        normal_decoding: str = "greedy",
+        careless_marker_text: str = "<careless>",
+        recovery_marker_text: str = "<recovery>",
         top_k_loss: int | None = None,
         jsd_token_clip: float | None = None,
         use_ema_teacher: bool = False,
@@ -198,11 +203,6 @@ class OPSDTrainer(SFTTrainer):
                 reason_first=reason_first,
                 conditioning_mode=conditioning_mode,
                 rollout_len=args.max_completion_length,
-                num_corrupt_points=num_corrupt_points,
-                rollout_start_offset=rollout_start_offset,
-                rollout_start_offset_jitter=rollout_start_offset_jitter,
-                corrupt_start_min_ratio=corrupt_start_min_ratio,
-                corrupt_start_max_ratio=corrupt_start_max_ratio,
             )
 
         super().__init__(
@@ -234,12 +234,17 @@ class OPSDTrainer(SFTTrainer):
         self.loss_mode = "tinker" if use_thinking_machines_loss else loss_mode
         self.rollout_decoding = rollout_decoding
         self.linear_opsd_alpha = linear_opsd_alpha
-        self.num_corrupt_points = num_corrupt_points
-        self.corrupt_marker_text = corrupt_marker_text
-        self.rollout_start_offset = rollout_start_offset
-        self.rollout_start_offset_jitter = rollout_start_offset_jitter
-        self.corrupt_start_min_ratio = corrupt_start_min_ratio
-        self.corrupt_start_max_ratio = corrupt_start_max_ratio
+        self.gold_prefix_ratio_min = gold_prefix_ratio_min
+        self.gold_prefix_ratio_max = gold_prefix_ratio_max
+        self.careless_rollout_len = careless_rollout_len
+        self.careless_temperature = careless_temperature
+        self.careless_top_p = careless_top_p
+        self.careless_top_k = careless_top_k
+        self.careless_resample_trials = careless_resample_trials
+        self.recovery_rollout_len = recovery_rollout_len
+        self.normal_decoding = normal_decoding
+        self.careless_marker_text = careless_marker_text
+        self.recovery_marker_text = recovery_marker_text
         self.top_k_loss = top_k_loss
         self.jsd_token_clip = jsd_token_clip
         self.use_ema_teacher = use_ema_teacher
@@ -252,6 +257,20 @@ class OPSDTrainer(SFTTrainer):
             raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
         if self.rollout_decoding not in {"sample", "greedy"}:
             raise ValueError(f"Unsupported rollout_decoding={self.rollout_decoding}")
+        if self.normal_decoding not in {"greedy"}:
+            raise ValueError(f"Unsupported normal_decoding={self.normal_decoding}")
+        if self.conditioning_mode == "linear_opsd":
+            assert 0.0 <= self.gold_prefix_ratio_min <= self.gold_prefix_ratio_max <= 1.0, (
+                "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
+            )
+            assert self.careless_rollout_len > 0, "careless_rollout_len must be positive"
+            assert self.careless_temperature > 0.0, "careless_temperature must be positive"
+            assert 0.0 < self.careless_top_p <= 1.0, "careless_top_p must be in (0, 1]"
+            assert self.careless_top_k >= 0, "careless_top_k must be non-negative"
+            assert self.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
+            assert self.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
+            assert self.careless_marker_text.strip(), "careless_marker_text must be non-empty"
+            assert self.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
 
         # Validate fixed_teacher option
         if self.fixed_teacher and peft_config is None:
@@ -299,12 +318,25 @@ class OPSDTrainer(SFTTrainer):
         self._generation_outputs_buffer = []
         self._generation_save_frequency = 5  # Save every 5 steps
 
+        if self.conditioning_mode == "linear_opsd":
+            generation_max_new_tokens = self.recovery_rollout_len
+            generation_temperature = 1.0
+            generation_top_p = 1.0
+            generation_do_sample = False
+            generation_top_k = 0
+        else:
+            generation_max_new_tokens = args.max_completion_length
+            generation_temperature = args.temperature
+            generation_top_p = args.top_p
+            generation_do_sample = self.rollout_decoding == "sample"
+            generation_top_k = args.top_k
+
         self.generation_config = GenerationConfig(
-            max_new_tokens=args.max_completion_length,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            do_sample=self.rollout_decoding == "sample",
-            top_k=args.top_k,
+            max_new_tokens=generation_max_new_tokens,
+            temperature=generation_temperature,
+            top_p=generation_top_p,
+            do_sample=generation_do_sample,
+            top_k=generation_top_k,
             pad_token_id=self.processing_class.pad_token_id,
             use_cache=True,
         )
@@ -528,6 +560,8 @@ class OPSDTrainer(SFTTrainer):
         # Masking
         if labels is not None:
             mask = labels != -100
+            if not mask.any():
+                return student_log_probs.new_zeros(())
             jsd = jsd[mask]
 
         # Apply reduction
@@ -572,6 +606,8 @@ class OPSDTrainer(SFTTrainer):
 
         if labels is not None:
             mask = labels != -100
+            if not mask.any():
+                return student_log_probs.new_zeros(())
             mixed = mixed[mask]
 
         if reduction == "batchmean":
@@ -727,73 +763,55 @@ class OPSDTrainer(SFTTrainer):
                     if name in saved:
                         param.data = saved[name]
 
-    def _build_linear_opsd_clean_batch(self, inputs):
-        clean_sequences = []
-        for i in range(len(inputs["problems"])):
-            problem_len = int(inputs["problem_prompt_lengths_per_example"][i].item())
-            solution_len = int(inputs["solution_lengths_per_example"][i].item())
-            problem_ids = inputs["problem_prompt_ids"][i, :problem_len].tolist()
-            solution_ids = inputs["solution_ids"][i, :solution_len].tolist()
-            clean_sequences.append(problem_ids + solution_ids)
-
-        padded = pad_token_sequences(clean_sequences, self.processing_class.pad_token_id)
-        return {
-            "input_ids": padded["input_ids"].to(self.accelerator.device),
-            "attention_mask": padded["attention_mask"].to(self.accelerator.device),
-        }
-
     def _prepare_linear_opsd_inputs(self, model, inputs):
-        clean_batch = self._build_linear_opsd_clean_batch(inputs)
-        with torch.no_grad():
-            clean_outputs = model(
-                input_ids=clean_batch["input_ids"],
-                attention_mask=clean_batch["attention_mask"],
-            )
-
         student_prompt_sequences = []
         teacher_prompt_texts = []
-        corruption_metadata = []
+        rollout_metadata = []
 
-        for i in range(len(inputs["problems"])):
-            problem = inputs["problems"][i]
-            solution = inputs["solutions"][i]
-            problem_len = int(inputs["problem_prompt_lengths_per_example"][i].item())
-            solution_len = int(inputs["solution_lengths_per_example"][i].item())
-            problem_prompt_ids = inputs["problem_prompt_ids"][i, :problem_len].tolist()
-            solution_ids = inputs["solution_ids"][i, :solution_len].tolist()
-            solution_logits = clean_outputs.logits[i, problem_len - 1 : problem_len + solution_len - 1, :]
+        with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model, torch.no_grad():
+            for i in range(len(inputs["problems"])):
+                problem = inputs["problems"][i]
+                solution = inputs["solutions"][i]
+                problem_len = int(inputs["problem_prompt_lengths_per_example"][i].item())
+                solution_len = int(inputs["solution_lengths_per_example"][i].item())
+                problem_prompt_ids = inputs["problem_prompt_ids"][i, :problem_len].tolist()
+                solution_ids = inputs["solution_ids"][i, :solution_len].tolist()
 
-            corruption = build_online_corruption(
-                tokenizer=self.processing_class,
-                problem=problem,
-                solution=solution,
-                problem_prompt_ids=problem_prompt_ids,
-                solution_ids=solution_ids,
-                solution_logits=solution_logits,
-                num_corrupt_points=self.num_corrupt_points,
-                rollout_start_offset=self.rollout_start_offset,
-                rollout_start_offset_jitter=self.rollout_start_offset_jitter,
-                corrupt_start_min_ratio=self.corrupt_start_min_ratio,
-                corrupt_start_max_ratio=self.corrupt_start_max_ratio,
-                corrupt_marker_text=self.corrupt_marker_text,
-            )
+                rollout = build_online_careless_prefix(
+                    model=unwrapped_model,
+                    tokenizer=self.processing_class,
+                    problem=problem,
+                    solution=solution,
+                    problem_prompt_ids=problem_prompt_ids,
+                    solution_ids=solution_ids,
+                    gold_prefix_ratio_min=self.gold_prefix_ratio_min,
+                    gold_prefix_ratio_max=self.gold_prefix_ratio_max,
+                    careless_rollout_len=self.careless_rollout_len,
+                    careless_temperature=self.careless_temperature,
+                    careless_top_p=self.careless_top_p,
+                    careless_top_k=self.careless_top_k,
+                    careless_resample_trials=self.careless_resample_trials,
+                    careless_marker_text=self.careless_marker_text,
+                    recovery_marker_text=self.recovery_marker_text,
+                    device=self.accelerator.device,
+                )
 
-            assert len(corruption["student_prompt_ids"]) <= self.args.max_length, (
-                "linear_opsd student prompt exceeds max_length. "
-                f"prompt_len={len(corruption['student_prompt_ids'])} max_length={self.args.max_length}"
-            )
+                assert len(rollout["student_prompt_ids"]) <= self.args.max_length, (
+                    "linear_opsd student prompt exceeds max_length. "
+                    f"prompt_len={len(rollout['student_prompt_ids'])} max_length={self.args.max_length}"
+                )
 
-            teacher_messages = [{"role": "user", "content": corruption["teacher_user_message"]}]
-            teacher_prompt_text = self.processing_class.apply_chat_template(
-                teacher_messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=True,
-            )
+                teacher_messages = [{"role": "user", "content": rollout["teacher_user_message"]}]
+                teacher_prompt_text = self.processing_class.apply_chat_template(
+                    teacher_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=True,
+                )
 
-            student_prompt_sequences.append(corruption["student_prompt_ids"])
-            teacher_prompt_texts.append(teacher_prompt_text)
-            corruption_metadata.append(corruption)
+                student_prompt_sequences.append(rollout["student_prompt_ids"])
+                teacher_prompt_texts.append(teacher_prompt_text)
+                rollout_metadata.append(rollout)
 
         student_padded = pad_token_sequences(student_prompt_sequences, self.processing_class.pad_token_id)
         teacher_encoded_no_pad = self.processing_class(
@@ -824,10 +842,7 @@ class OPSDTrainer(SFTTrainer):
             dtype=torch.long,
             device=self.accelerator.device,
         )
-        inputs["linear_opsd_corruption"] = corruption_metadata
-
-        del clean_outputs
-        empty_cache()
+        inputs["linear_opsd_metadata"] = rollout_metadata
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """
@@ -922,6 +937,8 @@ class OPSDTrainer(SFTTrainer):
             # Apply masking before computing loss
             if shifted_labels is not None:
                 mask = shifted_labels != -100
+                if not mask.any():
+                    return student_log_probs_sampled.new_zeros(())
                 advantage = advantage[mask]
                 student_log_probs_sampled_masked = student_log_probs_sampled[mask]
             else:
@@ -1097,7 +1114,7 @@ class OPSDTrainer(SFTTrainer):
         # Add system prompt to prompts
 
         max_completion_length = generation_config.max_new_tokens
-        temperature = generation_config.temperature if self.rollout_decoding == "sample" else 0.0
+        temperature = generation_config.temperature if generation_config.do_sample else 0.0
         # vLLM uses top_k=-1 for no top_k, transformers uses 0 or None.
         top_k = generation_config.top_k if generation_config.top_k and generation_config.top_k > 0 else -1
         if self.rollout_decoding == "greedy":
@@ -1639,6 +1656,11 @@ class OPSDTrainer(SFTTrainer):
 
         if self.processing_class.pad_token_id is not None:
             labels[labels == self.processing_class.pad_token_id] = -100
+
+        if self.conditioning_mode == "linear_opsd":
+            for i, metadata in enumerate(inputs["linear_opsd_metadata"]):
+                if metadata["skip_kd"]:
+                    labels[i, :] = -100
 
         inputs["labels"] = labels
 

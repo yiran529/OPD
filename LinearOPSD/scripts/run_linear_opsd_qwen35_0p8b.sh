@@ -9,8 +9,9 @@ cd "$(dirname "$0")/.."
 # - conditioning_mode=linear_opsd
 # - loss_mode=mixed_kl
 # - alpha=1.0
-# - B=1 corruption point, offset=2±10, K=8
-# - sampling rollout
+# - gold prefix ratio in [0.3, 0.7]
+# - careless prefix length = 8
+# - recovery rollout length = 8
 
 accelerate launch \
     --config_file accelerate.yaml \
@@ -21,7 +22,7 @@ accelerate launch \
     --dataset_name open-r1/OpenThoughts-114k-math \
     --dataset_split train \
     --output_dir outputs/linear_opsd \
-    --run_config qwen35_0p8b_linear_opsd_a1_b1_o2pm10_k8_sample \
+    --run_config qwen35_0p8b_linear_opsd_a1_gp03to07_c8_r8 \
     --learning_rate 5e-6 \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
@@ -41,14 +42,18 @@ accelerate launch \
     --presence_penalty 0.0 \
     --conditioning_mode linear_opsd \
     --loss_mode mixed_kl \
-    --rollout_decoding sample \
     --linear_opsd_alpha 1.0 \
-    --num_corrupt_points 1 \
-    --corrupt_marker_text "<corrupt>" \
-    --rollout_start_offset 2 \
-    --rollout_start_offset_jitter 10 \
-    --corrupt_start_min_ratio 0.0 \
-    --corrupt_start_max_ratio 0.5 \
+    --gold_prefix_ratio_min 0.3 \
+    --gold_prefix_ratio_max 0.7 \
+    --careless_rollout_len 8 \
+    --careless_temperature 1.3 \
+    --careless_top_p 0.95 \
+    --careless_top_k 50 \
+    --careless_resample_trials 3 \
+    --recovery_rollout_len 8 \
+    --normal_decoding greedy \
+    --careless_marker_text "<careless>" \
+    --recovery_marker_text "<recovery>" \
     --gradient_checkpointing \
     --use_vllm \
     --vllm_mode colocate \

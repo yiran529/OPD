@@ -489,3 +489,22 @@
   - call `LinearOPSD/corruption.py` to build entropy-based point corruption and the teacher-visible `<corrupt>` trace,
   - use vLLM only for rollout from the resulting student prompt.
 - This keeps corruption selection and prompt construction aligned with the trainer, while still using vLLM for fast continuation inspection.
+
+## 2026-04-17-14:30 : LinearOPSD switched from entropy point corruption to natural careless-prefix recovery
+- `conditioning_mode=linear_opsd` no longer uses entropy-ranked point corruption, replacement-token search, or `<corrupt>` markers.
+- The training path is now:
+  - sample a `gold prefix` from the clean solution,
+  - let the current student generate a short sampled `careless prefix`,
+  - resample if that careless segment exactly matches the gold suffix,
+  - then switch to normal decoding and distill only the fixed-length recovery rollout.
+- Teacher-visible student traces now use explicit stage markers:
+  - `<careless>` before the sampled polluted prefix,
+  - `<recovery>` before the recovery rollout segment.
+- `LinearOPSD/corruption.py` now owns gold-prefix sampling, careless-prefix generation, and teacher trace/message construction for both training and inspection.
+- `LinearOPSD/opsd_train.py` / `opsd_trainer.py` expose the new `linear_opsd` knobs:
+  - `gold_prefix_ratio_min/max`
+  - `careless_rollout_len`, `careless_temperature`, `careless_top_p`, `careless_top_k`
+  - `careless_resample_trials`
+  - `recovery_rollout_len`
+  - `normal_decoding`
+  - `careless_marker_text`, `recovery_marker_text`
