@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 
 accelerate launch \
     --config_file accelerate.yaml \
-    --num_processes 4 \
+    --num_processes 8 \
     --main_process_port 12949 \
     opsd_train.py \
     --model_name_or_path Qwen/Qwen3.5-0.8B \
@@ -26,16 +26,16 @@ accelerate launch \
     --learning_rate 5e-6 \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
-    --gradient_accumulation_steps 2 \
+    --gradient_accumulation_steps 1 \
     --num_train_epochs 3 \
     --max_length 20000 \
-    --max_completion_length 8 \
-    --save_steps 100 \
-    --logging_steps 5 \
+    # --max_completion_length 8 \
+    --save_steps 10 \
+    --logging_steps 1 \
     --attn_implementation flash_attention_2 \
     --torch_dtype bfloat16 \
     --beta 0 \
-    --lmbda 1 \
+    # --lmbda 1 \
     --temperature 1.0 \
     --top_p 1.0 \
     --top_k 0 \
@@ -45,12 +45,12 @@ accelerate launch \
     --linear_opsd_alpha 1.0 \
     --gold_prefix_ratio_min 0.3 \
     --gold_prefix_ratio_max 0.7 \
-    --careless_rollout_len 8 \
-    --careless_temperature 1.3 \
+    --careless_rollout_len 32 \
+    --careless_temperature 1.5 \
     --careless_top_p 0.95 \
     --careless_top_k 50 \
-    --careless_resample_trials 3 \
-    --recovery_rollout_len 8 \
+    --careless_resample_trials 2 \
+    --recovery_rollout_len 256 \
     --normal_decoding greedy \
     --careless_marker_text "<careless>" \
     --recovery_marker_text "<recovery>" \
