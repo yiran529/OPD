@@ -320,25 +320,17 @@ def _append_block(report_lines, title, content):
     report_lines.append(content if content else "(empty)")
 
 
-def _format_rollout_block(example):
-    return "\n".join(
-        [
-            f"gold_prefix_length: {example['gold_prefix_length']}",
-            f"careless_prefix_length: {example['careless_prefix_length']}",
-            f"careless_deviated: {example['careless_deviated']}",
-            f"careless_resample_count: {example['careless_resample_count']}",
-            f"skip_kd: {example['skip_kd']}",
-        ]
-    )
-
-
 def _write_outputs(examples, output_jsonl):
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     output_txt = output_jsonl.with_suffix(".txt")
 
     with output_jsonl.open("w", encoding="utf-8") as handle:
         for example in examples:
-            handle.write(json.dumps(example, ensure_ascii=False) + "\n")
+            compact_example = {
+                "student_full_text": example.get("student_full_text", ""),
+                "teacher_full_text": example.get("teacher_full_text", ""),
+            }
+            handle.write(json.dumps(compact_example, ensure_ascii=False) + "\n")
 
     report_lines = []
     for example in examples:
@@ -346,10 +338,6 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append("=" * 120)
         report_lines.append(f"EXAMPLE {example['dataset_index']}")
         report_lines.append("=" * 120)
-        _append_block(report_lines, "Metadata", _format_rollout_block(example))
-        _append_block(report_lines, "Student Seen Prefix", example["student_seen_prefix_text"])
-        _append_block(report_lines, "Teacher Seen Prefix", example["teacher_seen_prefix_text"])
-        _append_block(report_lines, "Recovery Rollout", example.get("recovery_rollout_text", ""))
         _append_block(report_lines, "Student Full", example.get("student_full_text", ""))
         _append_block(report_lines, "Teacher Full", example.get("teacher_full_text", ""))
 
