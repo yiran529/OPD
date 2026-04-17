@@ -122,15 +122,15 @@
 - `scripts/compare_gsm8k_thought_reveal.py`: compares two GSM8K reveal-eval `metrics.json` files and reports `delta_Gap_25/50/75`.
 
 ## LinearOPSD
-- `LinearOPSD/opsd_train.py`: upstream OPSD training entry, now extended with `conditioning_mode`, `loss_mode`, `linear_opsd` gold-prefix/careless-prefix/recovery controls, and configurable dataset selection so the same script can run original OPSD or the new natural polluted-state recovery path.
+- `LinearOPSD/opsd_train.py`: upstream OPSD training entry, now extended with `conditioning_mode`, `loss_mode=jsd`, `linear_opsd` gold-prefix/careless-prefix/recovery controls, and configurable dataset selection so the same script can run original OPSD or the new natural polluted-state recovery path.
 - `LinearOPSD/corruption.py`: trainer-time helpers for `linear_opsd` gold-prefix sampling, careless-prefix generation, teacher trace construction with `<careless>` / `<recovery>` markers, and generic token-sequence padding.
 - `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; `linear_opsd` now only tokenizes static materials (`problem` prompt ids and `solution` ids) and leaves corruption/prompt construction to trainer time.
-- `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; `conditioning_mode=linear_opsd` now samples a gold prefix, generates a short careless prefix online with the current student, builds teacher prompts with `<careless>` / `<recovery>` markers, then reuses the shared-rollout generation and mixed-KL supervision path for the recovery segment.
+- `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; `conditioning_mode=linear_opsd` now samples a gold prefix, generates a short careless prefix online with the current student, builds teacher prompts with `<careless>` / `<recovery>` markers, then reuses the shared-rollout generation and JSD supervision path for the recovery segment.
 - `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
 - `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility for the trainer-time `linear_opsd` path; it loads a local HF pure-text model (for Qwen3.5, explicitly preferring `Qwen3_5ForCausalLM` per the official text-generation path) to sample the same gold-prefix/careless-prefix setup as training, then uses vLLM to run the recovery rollout and reports the full trace with `<careless>` / `<recovery>` boundaries.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
 - `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the careless-prefix / recovery-rollout inspection script.
-- `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=mixed_kl`, gold-prefix sampling, careless-prefix generation, recovery-rollout KD, and LoRA + colocated vLLM.
+- `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=jsd`, gold-prefix sampling, careless-prefix generation, recovery-rollout KD, and LoRA + colocated vLLM.
 
 ## Dependencies
 - `requirements.txt`: torch/transformers/datasets/pyyaml/accelerate/flash-linear-attention/peft.

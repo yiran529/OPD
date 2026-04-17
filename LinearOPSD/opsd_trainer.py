@@ -185,7 +185,6 @@ class OPSDTrainer(SFTTrainer):
         conditioning_mode: str = "opsd",
         loss_mode: str = "jsd",
         rollout_decoding: str = "sample",
-        linear_opsd_alpha: float = 1.0,
         gold_prefix_ratio_min: float = 0.3,
         gold_prefix_ratio_max: float = 0.7,
         careless_rollout_len: int = 8,
@@ -246,7 +245,6 @@ class OPSDTrainer(SFTTrainer):
         self.conditioning_mode = conditioning_mode
         self.loss_mode = "tinker" if use_thinking_machines_loss else loss_mode
         self.rollout_decoding = rollout_decoding
-        self.linear_opsd_alpha = linear_opsd_alpha
         self.gold_prefix_ratio_min = gold_prefix_ratio_min
         self.gold_prefix_ratio_max = gold_prefix_ratio_max
         self.careless_rollout_len = careless_rollout_len
@@ -266,7 +264,7 @@ class OPSDTrainer(SFTTrainer):
 
         if self.conditioning_mode == "linear_opsd" and self.reason_first:
             raise ValueError("reason_first=True is incompatible with conditioning_mode=linear_opsd")
-        if self.loss_mode not in {"jsd", "mixed_kl", "tinker"}:
+        if self.loss_mode not in {"jsd", "tinker"}:
             raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
         if self.rollout_decoding not in {"sample", "greedy"}:
             raise ValueError(f"Unsupported rollout_decoding={self.rollout_decoding}")
@@ -586,50 +584,6 @@ class OPSDTrainer(SFTTrainer):
             return jsd.mean()
         else:
             return jsd
-
-    @staticmethod
-    def mixed_kl_loss(
-        student_logits,
-        teacher_logits,
-        labels=None,
-        alpha=1.0,
-        temperature=1.0,
-        reduction="batchmean",
-        top_k=None,
-        token_clip=None,
-    ):
-        student_logits = student_logits / temperature
-        teacher_logits = teacher_logits / temperature
-
-        if top_k is not None and top_k > 0:
-            top_k = min(top_k, teacher_logits.shape[-1])
-            _, top_k_indices = torch.topk(teacher_logits, k=top_k, dim=-1)
-            student_logits = torch.gather(student_logits, dim=-1, index=top_k_indices)
-            teacher_logits = torch.gather(teacher_logits, dim=-1, index=top_k_indices)
-
-        student_log_probs = F.log_softmax(student_logits, dim=-1)
-        teacher_log_probs = F.log_softmax(teacher_logits, dim=-1)
-
-        forward_kl = F.kl_div(student_log_probs, teacher_log_probs, reduction="none", log_target=True)
-        reverse_kl = F.kl_div(teacher_log_probs, student_log_probs, reduction="none", log_target=True)
-        mixed = alpha * forward_kl + (1.0 - alpha) * reverse_kl
-
-        if token_clip is not None:
-            mixed = mixed.clamp(max=token_clip)
-
-        if labels is not None:
-            mask = labels != -100
-            if not mask.any():
-                return student_log_probs.new_zeros(())
-            mixed = mixed[mask]
-
-        if reduction == "batchmean":
-            return mixed.sum() / mask.sum() if labels is not None else mixed.sum() / mixed.size(0)
-        if reduction == "sum":
-            return mixed.sum()
-        if reduction == "mean":
-            return mixed.mean()
-        return mixed
 
     def _update_ema(self):
         """Update EMA parameters after an optimizer step.
@@ -984,16 +938,7 @@ class OPSDTrainer(SFTTrainer):
             )
             del student_logits_for_loss, teacher_logits_for_loss
         else:
-            loss = self.mixed_kl_loss(
-                student_logits=student_logits_for_loss,
-                teacher_logits=teacher_logits_for_loss,
-                labels=shifted_labels,
-                alpha=self.linear_opsd_alpha,
-                temperature=self.temperature,
-                top_k=self.top_k_loss,
-                token_clip=self.jsd_token_clip,
-            )
-            del student_logits_for_loss, teacher_logits_for_loss
+            raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
 
         empty_cache()
 

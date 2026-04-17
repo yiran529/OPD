@@ -7,8 +7,8 @@ cd "$(dirname "$0")/.."
 # - Qwen/Qwen3.5-0.8B
 # - open-r1/OpenThoughts-114k-math
 # - conditioning_mode=linear_opsd
-# - loss_mode=mixed_kl
-# - alpha=1.0
+# - loss_mode=jsd
+# - beta=0
 # - gold prefix ratio in [0.3, 0.7]
 # - careless prefix length = 8
 # - recovery rollout length = 8
@@ -22,7 +22,7 @@ accelerate launch \
     --dataset_name open-r1/OpenThoughts-114k-math \
     --dataset_split train \
     --output_dir outputs/linear_opsd \
-    --run_config qwen35_0p8b_linear_opsd_a1_gp03to07_c8_r8 \
+    --run_config qwen35_0p8b_linear_opsd \
     --learning_rate 5e-6 \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
@@ -41,8 +41,7 @@ accelerate launch \
     --top_k 0 \
     --presence_penalty 0.0 \
     --conditioning_mode linear_opsd \
-    --loss_mode mixed_kl \
-    --linear_opsd_alpha 1.0 \
+    --loss_mode jsd \
     --gold_prefix_ratio_min 0.3 \
     --gold_prefix_ratio_max 0.7 \
     --careless_rollout_len 32 \

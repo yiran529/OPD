@@ -88,17 +88,13 @@ class CustomScriptArguments(ScriptArguments):
     loss_mode: str = field(
         default="jsd",
         metadata={
-            "help": "Distillation loss path. Supported values: `jsd`, `mixed_kl`. "
+            "help": "Distillation loss path. Only `jsd` is supported. "
             "`use_tinker_loss=True` remains as a separate legacy switch."
         },
     )
     rollout_decoding: str = field(
         default="sample",
         metadata={"help": "On-policy rollout decoding mode: `sample` or `greedy`."},
-    )
-    linear_opsd_alpha: float = field(
-        default=1.0,
-        metadata={"help": "Forward/reverse KL mixing coefficient used by `loss_mode=mixed_kl`."},
     )
     gold_prefix_ratio_min: float = field(
         default=0.3,
@@ -230,12 +226,9 @@ if __name__ == "__main__":
     assert script_args.conditioning_mode in {"opsd", "linear_opsd"}, (
         f"Unsupported conditioning_mode={script_args.conditioning_mode}"
     )
-    assert script_args.loss_mode in {"jsd", "mixed_kl"}, f"Unsupported loss_mode={script_args.loss_mode}"
+    assert script_args.loss_mode == "jsd", f"Unsupported loss_mode={script_args.loss_mode}"
     assert script_args.rollout_decoding in {"sample", "greedy"}, (
         f"Unsupported rollout_decoding={script_args.rollout_decoding}"
-    )
-    assert 0.0 <= script_args.linear_opsd_alpha <= 1.0, (
-        f"linear_opsd_alpha must be in [0, 1], got {script_args.linear_opsd_alpha}"
     )
     assert 0.0 <= script_args.gold_prefix_ratio_min <= script_args.gold_prefix_ratio_max <= 1.0, (
         "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
@@ -339,7 +332,6 @@ if __name__ == "__main__":
                 "conditioning_mode": script_args.conditioning_mode,
                 "loss_mode": "tinker" if script_args.use_tinker_loss else script_args.loss_mode,
                 "rollout_decoding": script_args.rollout_decoding,
-                "linear_opsd_alpha": script_args.linear_opsd_alpha,
                 "gold_prefix_ratio_min": script_args.gold_prefix_ratio_min,
                 "gold_prefix_ratio_max": script_args.gold_prefix_ratio_max,
                 "careless_rollout_len": script_args.careless_rollout_len,
@@ -440,7 +432,6 @@ if __name__ == "__main__":
         conditioning_mode=script_args.conditioning_mode,
         loss_mode=script_args.loss_mode,
         rollout_decoding=script_args.rollout_decoding,
-        linear_opsd_alpha=script_args.linear_opsd_alpha,
         gold_prefix_ratio_min=script_args.gold_prefix_ratio_min,
         gold_prefix_ratio_max=script_args.gold_prefix_ratio_max,
         careless_rollout_len=script_args.careless_rollout_len,

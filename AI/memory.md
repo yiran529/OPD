@@ -508,3 +508,10 @@
   - `recovery_rollout_len`
   - `normal_decoding`
   - `careless_marker_text`, `recovery_marker_text`
+
+## 2026-04-17-15:10 : LinearOPSD removed mixed_kl and standardizes on JSD
+- `LinearOPSD` no longer supports `loss_mode="mixed_kl"` or the `linear_opsd_alpha` knob.
+- Distillation in `LinearOPSD` now uses only:
+  - `loss_mode="jsd"`
+  - `beta` to select forward-KL (`beta=0`), reverse-KL (`beta=1`), or generalized JSD (`0 < beta < 1`)
+- The Qwen3.5 linear-OPSD launcher was updated to use `loss_mode=jsd` directly.
