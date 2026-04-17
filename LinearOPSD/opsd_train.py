@@ -380,12 +380,19 @@ if __name__ == "__main__":
     print(f"Using attention implementation: {model_args.attn_implementation or 'flash_attention_2'}")
     print(f"{'='*80}\n")
 
+    config = AutoConfig.from_pretrained(
+        model_args.model_name_or_path,
+        revision=model_args.model_revision,
+        trust_remote_code=model_args.trust_remote_code,
+    )
+    config.use_cache = not training_args.gradient_checkpointing
+
     model_kwargs = dict(
         revision=model_args.model_revision,
         trust_remote_code=model_args.trust_remote_code,
         attn_implementation=model_args.attn_implementation or "flash_attention_2",
         torch_dtype=model_dtype,
-        use_cache=False if training_args.gradient_checkpointing else True,
+        config=config,
     )
     quantization_config = get_quantization_config(model_args)
     if quantization_config is not None:
