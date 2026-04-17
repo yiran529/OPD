@@ -121,6 +121,10 @@ class OPSDTrainer(SFTTrainer):
     _tag_names = ["trl", "opsd"]
     _name = "OPSD"
 
+    def _main_print(self, *args, **kwargs):
+        if self.accelerator.is_main_process:
+            print(*args, **kwargs)
+
     @staticmethod
     def _set_use_cache_attr(obj, value):
         had_attr = hasattr(obj, "use_cache")
@@ -162,7 +166,9 @@ class OPSDTrainer(SFTTrainer):
                 "This is unsafe for LoRA/vLLM sync; use a checkpoint/runtime path that resolves to the same class."
             )
 
-        print(f"Model class alignment check passed: train_class={train_class_name} vllm_class={vllm_class_name}")
+        self._main_print(
+            f"Model class alignment check passed: train_class={train_class_name} vllm_class={vllm_class_name}"
+        )
 
     def __init__(
         self,
@@ -299,25 +305,25 @@ class OPSDTrainer(SFTTrainer):
 
         if self.use_ema_teacher:
             self.add_callback(EMAUpdateCallback(self))
-            print(f"\n{'='*80}")
-            print("EMA TEACHER MODE ENABLED")
-            print(f"EMA decay: {self.ema_decay}")
-            print("Teacher is an exponential moving average of the student weights.")
-            print("EMA parameters are initialized on the first optimizer step.")
-            print(f"{'='*80}\n")
+            self._main_print(f"\n{'='*80}")
+            self._main_print("EMA TEACHER MODE ENABLED")
+            self._main_print(f"EMA decay: {self.ema_decay}")
+            self._main_print("Teacher is an exponential moving average of the student weights.")
+            self._main_print("EMA parameters are initialized on the first optimizer step.")
+            self._main_print(f"{'='*80}\n")
 
         if self.fixed_teacher:
-            print(f"\n{'='*80}")
-            print("FIXED TEACHER MODE ENABLED")
-            print("Teacher will use the initial policy (base model without LoRA adapters)")
-            print("Student will update with LoRA adapters")
-            print(f"{'='*80}\n")
+            self._main_print(f"\n{'='*80}")
+            self._main_print("FIXED TEACHER MODE ENABLED")
+            self._main_print("Teacher will use the initial policy (base model without LoRA adapters)")
+            self._main_print("Student will update with LoRA adapters")
+            self._main_print(f"{'='*80}\n")
 
         if self.reason_first:
-            print(f"\n{'='*80}")
-            print("REASON FIRST MODE ENABLED")
-            print("Teacher will first reason about the privileged solution, then evaluate student's response")
-            print(f"{'='*80}\n")
+            self._main_print(f"\n{'='*80}")
+            self._main_print("REASON FIRST MODE ENABLED")
+            self._main_print("Teacher will first reason about the privileged solution, then evaluate student's response")
+            self._main_print(f"{'='*80}\n")
 
         # Track per-step loss statistics for on/off-policy batches (used in logging)
         self._on_policy_loss_total = 0.0
@@ -622,7 +628,7 @@ class OPSDTrainer(SFTTrainer):
                     self._ema_params = {name: param.data.clone().detach() for name, param in trainable}
                     n_tensors = len(self._ema_params)
                     n_params = sum(p.numel() for p in self._ema_params.values())
-                    print(
+                    self._main_print(
                         f"\nEMA teacher initialized: {n_tensors} tensors, {n_params:,} parameters "
                         f"(decay={decay})"
                     )
@@ -646,7 +652,7 @@ class OPSDTrainer(SFTTrainer):
                 }
                 n_tensors = len(self._ema_params)
                 n_params = sum(p.numel() for p in self._ema_params.values())
-                print(
+                self._main_print(
                     f"\nEMA teacher initialized: {n_tensors} tensors, {n_params:,} parameters "
                     f"(decay={decay})"
                 )
@@ -1003,16 +1009,16 @@ class OPSDTrainer(SFTTrainer):
         model_had_use_cache, original_use_cache = self._set_use_cache_attr(model.config, True)
         gen_had_use_cache, original_gen_use_cache = self._set_use_cache_attr(generation_config, True)
 
-        print(f"\n{'='*80}")
-        print(f"GENERATION DEBUG INFO:")
-        print(f"  Model dtype: {model.dtype}")
-        print(f"  Model config use_cache: {getattr(model.config, 'use_cache', '<missing>')}")
-        print(f"  Attention implementation: {getattr(model.config, '_attn_implementation', 'unknown')}")
-        print(f"  Generation config use_cache: {getattr(generation_config, 'use_cache', '<missing>')}")
-        print(f"  Batch size: {inputs['student_prompts'].shape[0]}")
-        print(f"  Prompt length: {inputs['student_prompts'].shape[1]}")
-        print(f"  Max new tokens: {generation_config.max_new_tokens}")
-        print(f"{'='*80}\n")
+        self._main_print(f"\n{'='*80}")
+        self._main_print("GENERATION DEBUG INFO:")
+        self._main_print(f"  Model dtype: {model.dtype}")
+        self._main_print(f"  Model config use_cache: {getattr(model.config, 'use_cache', '<missing>')}")
+        self._main_print(f"  Attention implementation: {getattr(model.config, '_attn_implementation', 'unknown')}")
+        self._main_print(f"  Generation config use_cache: {getattr(generation_config, 'use_cache', '<missing>')}")
+        self._main_print(f"  Batch size: {inputs['student_prompts'].shape[0]}")
+        self._main_print(f"  Prompt length: {inputs['student_prompts'].shape[1]}")
+        self._main_print(f"  Max new tokens: {generation_config.max_new_tokens}")
+        self._main_print(f"{'='*80}\n")
 
         # Generate output with respect to the student prompt only
         try:
@@ -1036,7 +1042,7 @@ class OPSDTrainer(SFTTrainer):
         num_tokens = total_completion_tokens * num_prompts
         avg_completion_length = total_completion_tokens
         tokens_per_sec = num_tokens / elapsed_time if elapsed_time > 0 else 0
-        print(
+        self._main_print(
             f"generation done - elapsed time: {elapsed_time:.2f}s, prompts: {num_prompts}, total tokens: {num_tokens}, avg length: {avg_completion_length}, speed: {tokens_per_sec:.1f} tok/s"
         )
 
@@ -1171,7 +1177,7 @@ class OPSDTrainer(SFTTrainer):
         num_prompts = len(completion_ids)
         avg_completion_length = total_completion_tokens / num_prompts if num_prompts > 0 else 0
         tokens_per_sec = total_completion_tokens / elapsed_time if elapsed_time > 0 else 0
-        print(
+        self._main_print(
             f"vLLM generation done - elapsed time: {elapsed_time:.2f}s, prompts: {num_prompts}, total tokens: {total_completion_tokens}, avg length: {avg_completion_length:.1f}, speed: {tokens_per_sec:.1f} tok/s"
         )
 
@@ -1322,7 +1328,7 @@ class OPSDTrainer(SFTTrainer):
         elapsed_time = time.time() - start_time
         total_tokens = sum(len(ids) for ids in completion_ids)
         num_prompts = len(completion_ids)
-        print(
+        self._main_print(
             f"vLLM teacher reasoning generation done - elapsed: {elapsed_time:.2f}s, prompts: {num_prompts}, tokens: {total_tokens}, speed: {total_tokens/elapsed_time:.1f} tok/s"
         )
 
@@ -1478,10 +1484,10 @@ class OPSDTrainer(SFTTrainer):
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
 
-        print(f"\n{'='*80}")
-        print(f"Saved {len(self._generation_outputs_buffer)} generation outputs to:")
-        print(f"  {output_file}")
-        print(f"{'='*80}\n")
+        self._main_print(f"\n{'='*80}")
+        self._main_print(f"Saved {len(self._generation_outputs_buffer)} generation outputs to:")
+        self._main_print(f"  {output_file}")
+        self._main_print(f"{'='*80}\n")
 
         # Clear buffer after saving
         self._generation_outputs_buffer.clear()
@@ -1511,9 +1517,9 @@ class OPSDTrainer(SFTTrainer):
 
         # === REASONING PHASE (if enabled) ===
         if self.reason_first:
-            print(f"\n{'='*80}")
-            print("REASONING PHASE: Teacher analyzing solution...")
-            print(f"{'='*80}\n")
+            self._main_print(f"\n{'='*80}")
+            self._main_print("REASONING PHASE: Teacher analyzing solution...")
+            self._main_print(f"{'='*80}\n")
 
             with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                 # Generate teacher's reasoning
@@ -1531,7 +1537,7 @@ class OPSDTrainer(SFTTrainer):
                 )
 
                 # Occasionally print reasoning
-                if random.random() < 0.01:
+                if self.accelerator.is_main_process and random.random() < 0.01:
                     print(f"\n{'='*80}")
                     print(f"TEACHER REASONING SAMPLE (Step {self.state.global_step}):")
                     print(f"{'='*80}")
@@ -1639,7 +1645,7 @@ class OPSDTrainer(SFTTrainer):
             )
 
         # Occasionally print student's generation with 1% probability
-        if random.random() < 0.01:
+        if self.accelerator.is_main_process and random.random() < 0.01:
             print(f"\n{'='*80}")
             print(f"STUDENT GENERATION SAMPLE (Step {self.state.global_step}):")
             print(f"{'='*80}")

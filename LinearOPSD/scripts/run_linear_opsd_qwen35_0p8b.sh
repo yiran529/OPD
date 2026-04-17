@@ -54,12 +54,13 @@ accelerate launch \
     --careless_marker_text "<careless>" \
     --recovery_marker_text "<recovery>" \
     --gradient_checkpointing \
-    --use_vllm \
-    --vllm_mode colocate \
-    --vllm_gpu_memory_utilization 0.6 \
-    --vllm_tensor_parallel_size 1 \
+    # --use_vllm \
+    # --vllm_mode colocate \
+    # --vllm_gpu_memory_utilization 0.6 \
+    # --vllm_tensor_parallel_size 1 \
     --use_peft \
     --lora_r 64 \
     --lora_alpha 128 \
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj in_proj_qkv in_proj_z in_proj_a in_proj_b out_proj \
-    --wandb_project LinearOPSD
+    --wandb_project LinearOPSD \
+    --report_to wandb

@@ -37,6 +37,15 @@ QWEN35_LORA_TARGETS = [
 ]
 
 
+def _is_main_process():
+    return os.environ.get("LOCAL_RANK", "0") == "0"
+
+
+def _main_print(*args, **kwargs):
+    if _is_main_process():
+        print(*args, **kwargs)
+
+
 def _patch_qwen35_lora_targets(model_args):
     if not getattr(model_args, "use_peft", False):
         return
@@ -59,7 +68,7 @@ def _patch_qwen35_lora_targets(model_args):
 
     if not current_targets:
         model_args.lora_target_modules = list(QWEN35_LORA_TARGETS)
-        print(
+        _main_print(
             "Qwen3.5 detected. Setting LoRA target modules to: "
             + ", ".join(model_args.lora_target_modules)
         )
@@ -68,7 +77,7 @@ def _patch_qwen35_lora_targets(model_args):
     missing_targets = [target for target in QWEN35_LORA_TARGETS if target not in current_targets]
     if missing_targets:
         model_args.lora_target_modules = list(current_targets) + missing_targets
-        print(
+        _main_print(
             "Qwen3.5 detected. Appended missing LoRA target modules: "
             + ", ".join(missing_targets)
         )
@@ -290,12 +299,12 @@ if __name__ == "__main__":
             full_wandb_run_config += "_fixteach"
 
     # Print configuration info
-    print(f"\n{'='*80}")
-    print(f"RUN CONFIGURATION")
-    print(f"{'='*80}")
-    print(f"WandB Run Name: {full_wandb_run_config}")
-    print(f"Output Directory: {training_args.output_dir}")
-    print(f"{'='*80}\n")
+    _main_print(f"\n{'='*80}")
+    _main_print("RUN CONFIGURATION")
+    _main_print(f"{'='*80}")
+    _main_print(f"WandB Run Name: {full_wandb_run_config}")
+    _main_print(f"Output Directory: {training_args.output_dir}")
+    _main_print(f"{'='*80}\n")
 
     ################
     # WandB Initialization
@@ -307,7 +316,7 @@ if __name__ == "__main__":
         )
 
     # Only initialize wandb on main process (LOCAL_RANK 0 or not set)
-    if os.environ.get("LOCAL_RANK", "0") == "0":
+    if _is_main_process():
         wandb.init(
             entity=training_args.wandb_entity,
             project=training_args.wandb_project,
@@ -375,10 +384,10 @@ if __name__ == "__main__":
     else:
         model_dtype = torch.bfloat16
 
-    print(f"\n{'='*80}")
-    print(f"Loading model with dtype: {model_dtype}")
-    print(f"Using attention implementation: {model_args.attn_implementation or 'flash_attention_2'}")
-    print(f"{'='*80}\n")
+    _main_print(f"\n{'='*80}")
+    _main_print(f"Loading model with dtype: {model_dtype}")
+    _main_print(f"Using attention implementation: {model_args.attn_implementation or 'flash_attention_2'}")
+    _main_print(f"{'='*80}\n")
 
     config = AutoConfig.from_pretrained(
         model_args.model_name_or_path,

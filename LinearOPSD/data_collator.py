@@ -1,3 +1,5 @@
+import os
+
 import torch
 
 from corruption import pad_token_sequences
@@ -53,6 +55,7 @@ class SelfDistillationDataCollator:
         self.reason_first = reason_first
         self.conditioning_mode = conditioning_mode
         self.rollout_len = rollout_len
+        self.is_main_process = int(os.environ.get("RANK", "0")) == 0
 
         assert self.conditioning_mode in {"opsd", "linear_opsd"}, (
             f"Unsupported conditioning_mode={self.conditioning_mode}"
@@ -74,11 +77,13 @@ class SelfDistillationDataCollator:
             "or reconsider if something doesn't work out:\n"
         )
 
-        print(f"[DataCollator] Original padding_side: {self.tokenizer.padding_side}")
+        if self.is_main_process:
+            print(f"[DataCollator] Original padding_side: {self.tokenizer.padding_side}")
         self.tokenizer.padding_side = "right"
-        print(f"[DataCollator] Set padding_side to: {self.tokenizer.padding_side}")
-        print(f"[DataCollator] Conditioning mode: {self.conditioning_mode}")
-        print(f"[DataCollator] Reason first mode: {self.reason_first}")
+        if self.is_main_process:
+            print(f"[DataCollator] Set padding_side to: {self.tokenizer.padding_side}")
+            print(f"[DataCollator] Conditioning mode: {self.conditioning_mode}")
+            print(f"[DataCollator] Reason first mode: {self.reason_first}")
 
     def __call__(self, features):
         if self.conditioning_mode == "linear_opsd":
