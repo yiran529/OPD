@@ -87,7 +87,6 @@ def build_teacher_trace_prefix_text(
 def build_teacher_user_message(
     problem,
     solution,
-    student_trace_prefix_text,
     careless_marker_text,
     recovery_marker_text,
 ):
@@ -102,7 +101,7 @@ def build_teacher_user_message(
         f"{recovery_marker_text} is the student's subsequent recovery rollout under normal decoding. "
         "Use the reference solution to judge where the student has drifted and provide a better "
         "next-token distribution while continuing the same trajectory.\n\n"
-        f"Here is the student's current reasoning trace:\n{student_trace_prefix_text}"
+        "Here is the student's current reasoning trace:\n"
     )
 
 
@@ -220,7 +219,6 @@ def build_online_careless_prefix(
         "teacher_user_message": build_teacher_user_message(
             problem=problem,
             solution=solution,
-            student_trace_prefix_text=teacher_trace_prefix_text,
             careless_marker_text=careless_marker_text,
             recovery_marker_text=recovery_marker_text,
         ),

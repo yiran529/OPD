@@ -111,17 +111,14 @@ def load_hf_model_for_prefix_build(
     selected_arch = None
 
     if model_type == "qwen3_5":
-        model_class = getattr(transformers_module, "Qwen3_5ForCausalLM", None)
-        assert model_class is not None, "transformers is missing Qwen3_5ForCausalLM"
-        selected_arch = "Qwen3_5ForCausalLM"
-        print("Pure-text Qwen3.5 task detected. Using official recommended class: Qwen3_5ForCausalLM")
-        model, loading_info = model_class.from_pretrained(
-            base_model_path,
-            config=config,
-            trust_remote_code=True,
-            dtype=torch.float32,
-            low_cpu_mem_usage=True,
-            output_loading_info=True,
+        expected_arch = architectures[0] if architectures else None
+        assert expected_arch is not None, "Qwen3.5 checkpoint is missing config.architectures"
+        model_class = getattr(transformers_module, expected_arch, None)
+        assert model_class is not None, f"transformers is missing {expected_arch}"
+        selected_arch = expected_arch
+        print(
+            "Pure-text task detected. Loading the checkpoint's published architecture "
+            f"{expected_arch} to avoid key-mapping drift."
         )
     else:
         for arch_name in architectures:
@@ -131,7 +128,7 @@ def load_hf_model_for_prefix_build(
                 selected_arch = arch_name
                 break
 
-    if model_type != "qwen3_5" and model_class is None:
+    if model_class is None:
         print(
             "Warning: could not resolve a concrete pure-text model class from config; "
             "falling back to AutoModelForCausalLM"
@@ -174,7 +171,7 @@ def load_hf_model_for_prefix_build(
             output_loading_info=True,
         )
         selected_arch = "AutoModelForCausalLM"
-    elif model_type != "qwen3_5":
+    else:
         model, loading_info = model_class.from_pretrained(
             base_model_path,
             config=config,
@@ -278,7 +275,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
         )
 
         teacher_messages = [{"role": "user", "content": rollout["teacher_user_message"]}]
-        teacher_prompt_text = tokenizer.apply_chat_template(
+        teacher_prompt_prefix_text = tokenizer.apply_chat_template(
             teacher_messages,
             tokenize=False,
             add_generation_prompt=True,
@@ -289,7 +286,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             "dataset_index": index,
             "problem": problem,
             "student_seen_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
-            "teacher_seen_prefix_text": teacher_prompt_text,
+            "teacher_seen_prefix_text": teacher_prompt_prefix_text + rollout["teacher_trace_prefix_text"],
             "gold_prefix_length": int(rollout["gold_prefix_length"]),
             "careless_prefix_length": len(rollout["careless_token_ids"]),
             "careless_deviated": bool(rollout["careless_deviated"]),

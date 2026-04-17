@@ -778,7 +778,7 @@ class OPSDTrainer(SFTTrainer):
 
     def _prepare_linear_opsd_inputs(self, model, inputs):
         student_prompt_sequences = []
-        teacher_prompt_texts = []
+        teacher_prompt_sequences = []
         rollout_metadata = []
 
         with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model, torch.no_grad():
@@ -815,40 +815,44 @@ class OPSDTrainer(SFTTrainer):
                 )
 
                 teacher_messages = [{"role": "user", "content": rollout["teacher_user_message"]}]
-                teacher_prompt_text = self.processing_class.apply_chat_template(
+                teacher_prompt_prefix_text = self.processing_class.apply_chat_template(
                     teacher_messages,
                     tokenize=False,
                     add_generation_prompt=True,
                     enable_thinking=True,
                 )
+                teacher_prompt_prefix_ids = self.processing_class(
+                    teacher_prompt_prefix_text,
+                    add_special_tokens=False,
+                )["input_ids"]
+                teacher_prompt_prefix_ids = [int(token_id) for token_id in teacher_prompt_prefix_ids]
+                teacher_trace_ids = self.processing_class(
+                    rollout["teacher_trace_prefix_text"],
+                    add_special_tokens=False,
+                )["input_ids"]
+                teacher_trace_ids = [int(token_id) for token_id in teacher_trace_ids]
+                teacher_prompt_ids = teacher_prompt_prefix_ids + teacher_trace_ids
+
+                assert len(teacher_prompt_ids) <= self.args.max_length, (
+                    "linear_opsd teacher prompt exceeds max_length. "
+                    f"prompt_len={len(teacher_prompt_ids)} max_length={self.args.max_length}"
+                )
 
                 student_prompt_sequences.append(rollout["student_prompt_ids"])
-                teacher_prompt_texts.append(teacher_prompt_text)
+                teacher_prompt_sequences.append(teacher_prompt_ids)
                 rollout_metadata.append(rollout)
 
         student_padded = pad_token_sequences(student_prompt_sequences, self.processing_class.pad_token_id)
-        teacher_encoded_no_pad = self.processing_class(
-            teacher_prompt_texts,
-            padding=False,
-            truncation=True,
-            max_length=self.args.max_length,
-        )
-        teacher_prompt_lengths = [len(ids) for ids in teacher_encoded_no_pad["input_ids"]]
-        max_teacher_prompt_len = max(teacher_prompt_lengths)
-        teacher_encoded = self.processing_class(
-            teacher_prompt_texts,
-            padding="max_length",
-            truncation=True,
-            max_length=max_teacher_prompt_len,
-            return_tensors="pt",
-        )
+        teacher_padded = pad_token_sequences(teacher_prompt_sequences, self.processing_class.pad_token_id)
+        teacher_prompt_lengths = [int(length) for length in teacher_padded["lengths"].tolist()]
+        max_teacher_prompt_len = int(teacher_padded["max_len"])
 
         inputs["student_prompts"] = student_padded["input_ids"].to(self.accelerator.device)
         inputs["student_prompt_attention_mask"] = student_padded["attention_mask"].to(self.accelerator.device)
         inputs["student_prompt_length"] = int(student_padded["max_len"])
         inputs["student_prompt_lengths_per_example"] = student_padded["lengths"].to(self.accelerator.device)
-        inputs["teacher_prompts"] = teacher_encoded["input_ids"].to(self.accelerator.device)
-        inputs["teacher_prompt_attention_mask"] = teacher_encoded["attention_mask"].to(self.accelerator.device)
+        inputs["teacher_prompts"] = teacher_padded["input_ids"].to(self.accelerator.device)
+        inputs["teacher_prompt_attention_mask"] = teacher_padded["attention_mask"].to(self.accelerator.device)
         inputs["teacher_prompt_length"] = max_teacher_prompt_len
         inputs["teacher_prompt_lengths_per_example"] = torch.tensor(
             teacher_prompt_lengths,
