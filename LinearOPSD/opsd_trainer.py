@@ -218,6 +218,7 @@ class OPSDTrainer(SFTTrainer):
             )
 
         args.remove_unused_columns = False
+        args.dataset_kwargs = {"skip_prepare_dataset": True}
         super().__init__(
             model,
             args=args,
@@ -230,7 +231,6 @@ class OPSDTrainer(SFTTrainer):
             optimizers=optimizers,
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
-            dataset_kwargs={"skip_prepare_dataset": True}
         )
 
         if args.disable_dropout:

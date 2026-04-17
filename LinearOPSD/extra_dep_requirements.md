@@ -24,3 +24,7 @@ MAX_JOBS=4 uv pip install flash-attn==2.8.3 --no-build-isolation -v
 DEBUG Failed to reflink `/data/wyr/.uv-cache/archive-v0/HlC5mgPZLZpdMaDfh8y_Q/hopper/test_flash_attn.py` to `/data/wyr/LinearOPSD/.venv/lib/python3.10/site-packages/hopper/test_flash_attn.py`: Operation not supported (os error 95), falling back
 Installed 1 package in 6ms
  + flash-attn==2.8.3
+
+6. 
+uv pip install flash-linear-attention
+uv pip install causal-conv1d (这个耗时有点久)
