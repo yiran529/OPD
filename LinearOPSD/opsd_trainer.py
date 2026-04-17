@@ -217,6 +217,7 @@ class OPSDTrainer(SFTTrainer):
                 rollout_len=args.max_completion_length,
             )
 
+        args.remove_unused_columns = False
         super().__init__(
             model,
             args=args,
@@ -229,6 +230,7 @@ class OPSDTrainer(SFTTrainer):
             optimizers=optimizers,
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
+            dataset_kwargs={"skip_prepare_dataset": True}
         )
 
         if args.disable_dropout:
