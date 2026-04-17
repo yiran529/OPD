@@ -121,6 +121,19 @@ class OPSDTrainer(SFTTrainer):
     _tag_names = ["trl", "opsd"]
     _name = "OPSD"
 
+    @staticmethod
+    def _set_use_cache_attr(obj, value):
+        had_attr = hasattr(obj, "use_cache")
+        original_value = getattr(obj, "use_cache", None)
+        if had_attr:
+            setattr(obj, "use_cache", value)
+        return had_attr, original_value
+
+    @staticmethod
+    def _restore_use_cache_attr(obj, had_attr, original_value):
+        if had_attr:
+            setattr(obj, "use_cache", original_value)
+
     def _assert_train_vllm_model_alignment(self):
         train_model = self.accelerator.unwrap_model(self.model)
         if hasattr(train_model, "get_base_model"):
@@ -997,11 +1010,10 @@ class OPSDTrainer(SFTTrainer):
             # Use transformers generation (slower)
             with torch.no_grad():
                 # Temporarily enable KV cache
-                original_use_cache = model.config.use_cache
-                original_gen_use_cache = self.reasoning_generation_config.use_cache
-
-                model.config.use_cache = True
-                self.reasoning_generation_config.use_cache = True
+                model_had_use_cache, original_use_cache = self._set_use_cache_attr(model.config, True)
+                gen_had_use_cache, original_gen_use_cache = self._set_use_cache_attr(
+                    self.reasoning_generation_config, True
+                )
 
                 # If fixed_teacher=True, disable LoRA adapters
                 adapter_context = (
@@ -1021,8 +1033,12 @@ class OPSDTrainer(SFTTrainer):
                         )
                         reasoning_ids = reasoning_outputs.sequences
                 finally:
-                    model.config.use_cache = original_use_cache
-                    self.reasoning_generation_config.use_cache = original_gen_use_cache
+                    self._restore_use_cache_attr(model.config, model_had_use_cache, original_use_cache)
+                    self._restore_use_cache_attr(
+                        self.reasoning_generation_config,
+                        gen_had_use_cache,
+                        original_gen_use_cache,
+                    )
 
                 return reasoning_ids
 
@@ -1033,18 +1049,15 @@ class OPSDTrainer(SFTTrainer):
         start_time = time.time()
 
         # Temporarily enable KV cache for generation if it was disabled for training
-        original_use_cache = model.config.use_cache
-        original_gen_use_cache = generation_config.use_cache
-
-        model.config.use_cache = True
-        generation_config.use_cache = True
+        model_had_use_cache, original_use_cache = self._set_use_cache_attr(model.config, True)
+        gen_had_use_cache, original_gen_use_cache = self._set_use_cache_attr(generation_config, True)
 
         print(f"\n{'='*80}")
         print(f"GENERATION DEBUG INFO:")
         print(f"  Model dtype: {model.dtype}")
-        print(f"  Model config use_cache: {model.config.use_cache}")
+        print(f"  Model config use_cache: {getattr(model.config, 'use_cache', '<missing>')}")
         print(f"  Attention implementation: {getattr(model.config, '_attn_implementation', 'unknown')}")
-        print(f"  Generation config use_cache: {generation_config.use_cache}")
+        print(f"  Generation config use_cache: {getattr(generation_config, 'use_cache', '<missing>')}")
         print(f"  Batch size: {inputs['student_prompts'].shape[0]}")
         print(f"  Prompt length: {inputs['student_prompts'].shape[1]}")
         print(f"  Max new tokens: {generation_config.max_new_tokens}")
@@ -1063,8 +1076,8 @@ class OPSDTrainer(SFTTrainer):
             generated_tokens = generated_outputs.sequences
         finally:
             # Restore original settings
-            model.config.use_cache = original_use_cache
-            generation_config.use_cache = original_gen_use_cache
+            self._restore_use_cache_attr(model.config, model_had_use_cache, original_use_cache)
+            self._restore_use_cache_attr(generation_config, gen_had_use_cache, original_gen_use_cache)
 
         elapsed_time = time.time() - start_time
         num_prompts = generated_tokens.shape[0]

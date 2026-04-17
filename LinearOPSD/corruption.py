@@ -3,6 +3,19 @@ import random
 import torch
 
 
+def _set_use_cache_attr(obj, value):
+    had_attr = hasattr(obj, "use_cache")
+    original_value = getattr(obj, "use_cache", None)
+    if had_attr:
+        setattr(obj, "use_cache", value)
+    return had_attr, original_value
+
+
+def _restore_use_cache_attr(obj, had_attr, original_value):
+    if had_attr:
+        setattr(obj, "use_cache", original_value)
+
+
 def pad_token_sequences(sequences, pad_token_id):
     lengths = [len(ids) for ids in sequences]
     max_len = max(lengths) if lengths else 0
@@ -106,8 +119,7 @@ def _generate_careless_tokens(
     prompt_tensor = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     attention_mask = torch.ones_like(prompt_tensor)
 
-    original_use_cache = model.config.use_cache
-    model.config.use_cache = True
+    had_use_cache, original_use_cache = _set_use_cache_attr(model.config, True)
     try:
         generated = model.generate(
             input_ids=prompt_tensor,
@@ -124,7 +136,7 @@ def _generate_careless_tokens(
             use_cache=True,
         )
     finally:
-        model.config.use_cache = original_use_cache
+        _restore_use_cache_attr(model.config, had_use_cache, original_use_cache)
 
     generated_ids = generated.sequences[0, len(prompt_ids) :].tolist()
     assert generated_ids, "careless rollout generated zero tokens"

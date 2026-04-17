@@ -103,21 +103,37 @@ def load_hf_model_for_prefix_build(
         trust_remote_code=True,
     )
     architectures = list(getattr(config, "architectures", None) or [])
+    model_type = getattr(config, "model_type", None)
     print(f"HF model config.architectures = {architectures or ['<missing>']}")
 
     transformers_module = importlib.import_module("transformers")
     model_class = None
     selected_arch = None
-    for arch_name in architectures:
-        candidate = getattr(transformers_module, arch_name, None)
-        if candidate is not None:
-            model_class = candidate
-            selected_arch = arch_name
-            break
 
-    if model_class is None:
+    if model_type == "qwen3_5":
+        model_class = getattr(transformers_module, "Qwen3_5ForCausalLM", None)
+        assert model_class is not None, "transformers is missing Qwen3_5ForCausalLM"
+        selected_arch = "Qwen3_5ForCausalLM"
+        print("Pure-text Qwen3.5 task detected. Using official recommended class: Qwen3_5ForCausalLM")
+        model, loading_info = model_class.from_pretrained(
+            base_model_path,
+            config=config,
+            trust_remote_code=True,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            output_loading_info=True,
+        )
+    else:
+        for arch_name in architectures:
+            candidate = getattr(transformers_module, arch_name, None)
+            if candidate is not None:
+                model_class = candidate
+                selected_arch = arch_name
+                break
+
+    if model_type != "qwen3_5" and model_class is None:
         print(
-            "Warning: could not resolve a concrete model class from config.architectures; "
+            "Warning: could not resolve a concrete pure-text model class from config; "
             "falling back to AutoModelForCausalLM"
         )
 
@@ -158,7 +174,7 @@ def load_hf_model_for_prefix_build(
             output_loading_info=True,
         )
         selected_arch = "AutoModelForCausalLM"
-    else:
+    elif model_type != "qwen3_5":
         model, loading_info = model_class.from_pretrained(
             base_model_path,
             config=config,
