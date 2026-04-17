@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import random
 import sys
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from vllm import LLM, SamplingParams
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -90,14 +91,103 @@ def load_vllm_model(
     return llm, tokenizer
 
 
-def load_hf_model_for_corruption(base_model_path: str, checkpoint_dir: str = None, device: str = "cpu"):
+def load_hf_model_for_corruption(
+    base_model_path: str,
+    tokenizer,
+    checkpoint_dir: str = None,
+    device: str = "cpu",
+):
     print(f"Loading HF model for corruption scoring from: {base_model_path} on {device}")
-    model = AutoModelForCausalLM.from_pretrained(
+    config = AutoConfig.from_pretrained(
         base_model_path,
         trust_remote_code=True,
-        torch_dtype=torch.float32,
-        low_cpu_mem_usage=True,
     )
+    architectures = list(getattr(config, "architectures", None) or [])
+    print(f"HF corruption model config.architectures = {architectures or ['<missing>']}")
+
+    transformers_module = importlib.import_module("transformers")
+    model_class = None
+    selected_arch = None
+    for arch_name in architectures:
+        candidate = getattr(transformers_module, arch_name, None)
+        if candidate is not None:
+            model_class = candidate
+            selected_arch = arch_name
+            break
+
+    if model_class is None:
+        print(
+            "Warning: could not resolve a concrete model class from config.architectures; "
+            "falling back to AutoModelForCausalLM"
+        )
+
+        text_config = getattr(config, "text_config", None)
+        if text_config is not None:
+            promoted = {}
+            if hasattr(text_config, "to_dict"):
+                promoted.update(text_config.to_dict())
+            for attr_name in dir(text_config):
+                if attr_name.startswith("_") or attr_name in promoted:
+                    continue
+                try:
+                    value = getattr(text_config, attr_name)
+                except Exception:
+                    continue
+                if callable(value):
+                    continue
+                promoted[attr_name] = value
+            for attr_name, value in promoted.items():
+                if not hasattr(config, attr_name):
+                    setattr(config, attr_name, value)
+
+        if not hasattr(config, "vocab_size"):
+            config.vocab_size = len(tokenizer)
+        if not hasattr(config, "pad_token_id"):
+            config.pad_token_id = tokenizer.pad_token_id
+        if not hasattr(config, "bos_token_id"):
+            config.bos_token_id = tokenizer.bos_token_id
+        if not hasattr(config, "eos_token_id"):
+            config.eos_token_id = tokenizer.eos_token_id
+
+        model, loading_info = AutoModelForCausalLM.from_pretrained(
+            base_model_path,
+            config=config,
+            trust_remote_code=True,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            output_loading_info=True,
+        )
+        selected_arch = "AutoModelForCausalLM"
+    else:
+        model, loading_info = model_class.from_pretrained(
+            base_model_path,
+            config=config,
+            trust_remote_code=True,
+            dtype=torch.float32,
+            low_cpu_mem_usage=True,
+            output_loading_info=True,
+        )
+
+    print(f"HF corruption model class = {selected_arch}")
+    missing = list(loading_info.get("missing_keys", []) or [])
+    unexpected = list(loading_info.get("unexpected_keys", []) or [])
+    mismatched = list(loading_info.get("mismatched_keys", []) or [])
+    errors = list(loading_info.get("error_msgs", []) or [])
+    if missing or unexpected or mismatched or errors:
+        preview = []
+        if missing:
+            preview.append(f"missing_keys={missing[:8]}")
+        if unexpected:
+            preview.append(f"unexpected_keys={unexpected[:8]}")
+        if mismatched:
+            preview.append(f"mismatched_keys={mismatched[:8]}")
+        if errors:
+            preview.append(f"error_msgs={errors[:4]}")
+        raise RuntimeError(
+            "HF corruption-scoring model did not load cleanly. "
+            "This usually means the selected architecture class does not match the checkpoint structure. "
+            + " | ".join(preview)
+        )
 
     if checkpoint_dir is not None:
         adapter_safetensors = Path(checkpoint_dir) / "adapter_model.safetensors"
@@ -380,6 +470,7 @@ def main():
     lora_request = _build_lora_request(args.checkpoint_dir)
     hf_model = load_hf_model_for_corruption(
         args.base_model,
+        tokenizer=tokenizer,
         checkpoint_dir=args.checkpoint_dir,
         device=args.corruption_device,
     )
