@@ -13,6 +13,14 @@ cd "$(dirname "$0")/.."
 # - careless prefix length = 8
 # - recovery rollout length = 8
 
+# --num_train_epochs 3 \
+# --max_completion_length 8 \
+# --lmbda 1 \
+# --use_vllm \
+# --vllm_mode colocate \
+# --vllm_gpu_memory_utilization 0.6 \
+# --vllm_tensor_parallel_size 1 \
+
 accelerate launch \
     --config_file accelerate.yaml \
     --num_processes 8 \
@@ -27,15 +35,14 @@ accelerate launch \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
     --gradient_accumulation_steps 1 \
-    --num_train_epochs 3 \
+    --max_steps 200 \
     --max_length 20000 \
-    # --max_completion_length 8 \
-    --save_steps 10 \
+    --save_strategy steps \
+    --save_steps 20 \
     --logging_steps 1 \
     --attn_implementation flash_attention_2 \
     --torch_dtype bfloat16 \
     --beta 0 \
-    # --lmbda 1 \
     --temperature 1.0 \
     --top_p 1.0 \
     --top_k 0 \
@@ -53,10 +60,6 @@ accelerate launch \
     --careless_marker_text "<careless>" \
     --recovery_marker_text "<recovery>" \
     --gradient_checkpointing \
-    # --use_vllm \
-    # --vllm_mode colocate \
-    # --vllm_gpu_memory_utilization 0.6 \
-    # --vllm_tensor_parallel_size 1 \
     --use_peft \
     --lora_r 64 \
     --lora_alpha 128 \

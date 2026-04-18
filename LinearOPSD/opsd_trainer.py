@@ -143,6 +143,41 @@ class OPSDTrainer(SFTTrainer):
             completion_texts.append(self.processing_class.decode(valid_completion_ids, skip_special_tokens=False))
         return completion_texts
 
+    def _build_prompt_completion_sequences(
+        self,
+        prompt_tensor,
+        prompt_lengths,
+        completion_tensor,
+        completion_attention_mask,
+        pad_token_id,
+    ):
+        max_prompt_len = prompt_tensor.shape[1]
+        batch_size = prompt_tensor.shape[0]
+        completion_len = completion_tensor.shape[1]
+
+        full_input_ids = torch.full(
+            (batch_size, max_prompt_len + completion_len),
+            pad_token_id,
+            dtype=prompt_tensor.dtype,
+            device=prompt_tensor.device,
+        )
+        full_attention_mask = torch.zeros_like(full_input_ids)
+
+        # ---- right-align valid prompt tokens so completion starts after the true prompt tail ----
+        for row_idx in range(batch_size):
+            actual_prompt_len = int(prompt_lengths[row_idx].item())
+            prompt_start = max_prompt_len - actual_prompt_len
+            full_input_ids[row_idx, prompt_start:max_prompt_len] = prompt_tensor[row_idx, :actual_prompt_len]
+            full_attention_mask[row_idx, prompt_start:max_prompt_len] = 1
+            full_input_ids[row_idx, max_prompt_len:] = completion_tensor[row_idx]
+            full_attention_mask[row_idx, max_prompt_len:] = completion_attention_mask[row_idx]
+
+        labels = full_input_ids.clone()
+        labels[:, :max_prompt_len] = -100
+        labels[full_attention_mask == 0] = -100
+
+        return full_input_ids, full_attention_mask, labels
+
     @staticmethod
     def _set_use_cache_attr(obj, value):
         had_attr = hasattr(obj, "use_cache")
@@ -1634,32 +1669,33 @@ class OPSDTrainer(SFTTrainer):
 
         # Extract generation part (same slice for all examples since prompts are padded)
         generation_ids = generated_ids[:, student_prompt_len:]
+        generation_attention_mask = generated_attention_mask[:, student_prompt_len:]
 
-        # Construct student full sequence: [student_prompt][generation]
-        inputs["student_input_ids"] = generated_ids
-        inputs["student_attention_mask"] = generated_attention_mask
+        # Rebuild full sequences so completion is conditioned on each sample's true prompt tail,
+        # while keeping the same fixed prompt-block length used by the loss slicing code.
+        student_input_ids, student_attention_mask, labels = self._build_prompt_completion_sequences(
+            prompt_tensor=inputs["student_prompts"],
+            prompt_lengths=inputs["student_prompt_lengths_per_example"],
+            completion_tensor=generation_ids,
+            completion_attention_mask=generation_attention_mask,
+            pad_token_id=self.processing_class.pad_token_id,
+        )
+        inputs["student_input_ids"] = student_input_ids
+        inputs["student_attention_mask"] = student_attention_mask
 
-        # Construct teacher full sequence: [teacher_prompt][generation]
-        teacher_prompts = inputs["teacher_prompts"]
-        teacher_full_ids = torch.cat([teacher_prompts, generation_ids], dim=1)
+        teacher_prompt_lengths = inputs.get("teacher_prompt_lengths_per_example")
+        if teacher_prompt_lengths is None:
+            teacher_prompt_lengths = inputs["teacher_prompt_attention_mask"].sum(dim=1)
 
-        # Create attention mask for teacher
-        teacher_attention_mask = torch.ones_like(teacher_full_ids)
-        if self.processing_class.pad_token_id is not None:
-            teacher_attention_mask[teacher_full_ids == self.processing_class.pad_token_id] = 0
-
-        inputs["teacher_input_ids"] = teacher_full_ids
+        teacher_input_ids, teacher_attention_mask, _ = self._build_prompt_completion_sequences(
+            prompt_tensor=inputs["teacher_prompts"],
+            prompt_lengths=teacher_prompt_lengths,
+            completion_tensor=generation_ids,
+            completion_attention_mask=generation_attention_mask,
+            pad_token_id=self.processing_class.pad_token_id,
+        )
+        inputs["teacher_input_ids"] = teacher_input_ids
         inputs["teacher_attention_mask"] = teacher_attention_mask
-
-        # Create labels for generation tokens
-        # Mask prompt tokens (use per-example lengths for accurate masking)
-        labels = generated_ids.clone()
-        for i in range(labels.shape[0]):
-            actual_prompt_len = inputs["student_prompt_lengths_per_example"][i].item()
-            labels[i, :actual_prompt_len] = -100  # Mask actual prompt
-
-        if self.processing_class.pad_token_id is not None:
-            labels[labels == self.processing_class.pad_token_id] = -100
 
         if self.conditioning_mode == "linear_opsd":
             for i, metadata in enumerate(inputs["linear_opsd_metadata"]):

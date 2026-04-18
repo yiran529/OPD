@@ -546,3 +546,10 @@
   - `LinearOPSD/opsd_train.py` no longer defines/logs/passes `normal_decoding`,
   - `LinearOPSD/opsd_trainer.py` no longer stores or validates it,
   - `LinearOPSD/eval/inspect_linear_opsd_rollout.py` and related shell scripts now use `rollout_decoding`.
+
+## 2026-04-18-00:40 : Rebuild train-time full sequences so completion follows the true prompt tail
+- Fixing generation-time left padding alone was not sufficient: the train-time student/teacher forwards were still using `[right-padded prompt block][completion]`, which made the first completion token be predicted from a pad-position hidden state for shorter samples.
+- `LinearOPSD/opsd_trainer.py` now rebuilds both student and teacher full sequences into:
+  - `[left pad inside fixed prompt block][valid prompt][completion]`
+  - while keeping the same fixed prompt-block width used by downstream loss slicing.
+- This preserves the existing `student_prompt_length` / `teacher_prompt_length` based loss code, but ensures completion supervision is conditioned on each sample's actual last prompt token instead of a right-padding gap.
