@@ -520,3 +520,29 @@
   - `loss_mode="jsd"`
   - `beta` to select forward-KL (`beta=0`), reverse-KL (`beta=1`), or generalized JSD (`0 < beta < 1`)
 - The Qwen3.5 linear-OPSD launcher was updated to use `loss_mode=jsd` directly.
+
+## 2026-04-18-00:10 : LinearOPSD keeps training layout unchanged while fixing batched generation input
+- The `LinearOPSD/opsd_trainer.py` fix is intentionally an adapter-layer change, not a training-logic rewrite:
+  - `model.generate(...)` now receives a temporary left-padded batch built from `student_prompt_lengths_per_example`,
+  - but the post-generation tensors are immediately reconstructed back into the original right-padded training layout before label masking and teacher/student concatenation.
+- This preserves the existing downstream assumptions:
+  - `generation_ids = generated_ids[:, student_prompt_len:]` still extracts the shared rollout segment,
+  - prompt masking still uses the original right-padded prompt block,
+  - teacher inputs still append the same rollout tokens without changing the broader OPSD data flow.
+- Generation dumps were also expanded to save `teacher_prompt`, `gold_prefix_text`, `careless_prefix_text`, `careless_deviated`, and `skip_kd`, so rollout inspection now exposes the actual `linear_opsd` prefix construction instead of only prompt/completion text.
+
+## 2026-04-18-00:20 : LinearOPSD recovery rollout now reuses the shared OPSD generation config
+- `LinearOPSD` no longer hard-codes `linear_opsd` recovery rollout to `temperature=1.0`, `top_p=1.0`, `top_k=0`, `do_sample=False` inside `OPSDTrainer`.
+- Recovery rollout now uses the same shared generation path as `opsd`:
+  - `args.max_completion_length` remains the single source of rollout length,
+  - `rollout_decoding`, `temperature`, `top_p`, and `top_k` remain the single source of sampling behavior.
+- For backward compatibility, `opsd_train.py` still accepts `normal_decoding` for `linear_opsd`, but immediately copies it into `rollout_decoding` before trainer construction and treats it as a deprecated alias.
+- The eval/logging completion callback now follows the same shared rollout config instead of forcing `linear_opsd` samples back to greedy.
+
+## 2026-04-18-00:30 : Remove `normal_decoding` and keep a single rollout-decoding interface
+- `LinearOPSD` no longer exposes `normal_decoding` anywhere in train/eval/inspect paths; `rollout_decoding` is now the only decoding-mode knob.
+- This removes duplicated configuration for the same recovery-rollout behavior and keeps `linear_opsd` aligned with the shared `opsd` generation interface.
+- Updated surfaces:
+  - `LinearOPSD/opsd_train.py` no longer defines/logs/passes `normal_decoding`,
+  - `LinearOPSD/opsd_trainer.py` no longer stores or validates it,
+  - `LinearOPSD/eval/inspect_linear_opsd_rollout.py` and related shell scripts now use `rollout_decoding`.

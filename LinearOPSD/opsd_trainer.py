@@ -217,7 +217,6 @@ class OPSDTrainer(SFTTrainer):
         careless_top_k: int = 50,
         careless_resample_trials: int = 3,
         recovery_rollout_len: int = 8,
-        normal_decoding: str = "greedy",
         careless_marker_text: str = "<careless>",
         recovery_marker_text: str = "<recovery>",
         top_k_loss: int | None = None,
@@ -279,7 +278,6 @@ class OPSDTrainer(SFTTrainer):
         self.careless_top_k = careless_top_k
         self.careless_resample_trials = careless_resample_trials
         self.recovery_rollout_len = recovery_rollout_len
-        self.normal_decoding = normal_decoding
         self.careless_marker_text = careless_marker_text
         self.recovery_marker_text = recovery_marker_text
         self.top_k_loss = top_k_loss
@@ -294,8 +292,6 @@ class OPSDTrainer(SFTTrainer):
             raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
         if self.rollout_decoding not in {"sample", "greedy"}:
             raise ValueError(f"Unsupported rollout_decoding={self.rollout_decoding}")
-        if self.normal_decoding not in {"greedy"}:
-            raise ValueError(f"Unsupported normal_decoding={self.normal_decoding}")
         if self.conditioning_mode == "linear_opsd":
             assert 0.0 <= self.gold_prefix_ratio_min <= self.gold_prefix_ratio_max <= 1.0, (
                 "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
@@ -355,18 +351,11 @@ class OPSDTrainer(SFTTrainer):
         self._generation_outputs_buffer = []
         self._generation_save_frequency = 5  # Save every 5 steps
 
-        if self.conditioning_mode == "linear_opsd":
-            generation_max_new_tokens = self.recovery_rollout_len
-            generation_temperature = 1.0
-            generation_top_p = 1.0
-            generation_do_sample = False
-            generation_top_k = 0
-        else:
-            generation_max_new_tokens = args.max_completion_length
-            generation_temperature = args.temperature
-            generation_top_p = args.top_p
-            generation_do_sample = self.rollout_decoding == "sample"
-            generation_top_k = args.top_k
+        generation_max_new_tokens = args.max_completion_length
+        generation_temperature = args.temperature
+        generation_top_p = args.top_p
+        generation_do_sample = self.rollout_decoding == "sample"
+        generation_top_k = args.top_k
 
         self.generation_config = GenerationConfig(
             max_new_tokens=generation_max_new_tokens,

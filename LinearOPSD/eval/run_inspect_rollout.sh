@@ -21,7 +21,7 @@ NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python inspect_linear_opsd_rollo
     --careless_top_p 0.95 \
     --careless_top_k 50 \
     --careless_resample_trials 3 \
-    --normal_decoding greedy \
+    --rollout_decoding greedy \
     --recovery_rollout_len 8 \
     --careless_marker_text "<careless>" \
     --recovery_marker_text "<recovery>" \
@@ -46,7 +46,7 @@ wait
 #     --careless_top_p 0.95 \
 #     --careless_top_k 50 \
 #     --careless_resample_trials 3 \
-#     --normal_decoding greedy \
+#     --rollout_decoding greedy \
 #     --recovery_rollout_len 8 \
 #     --careless_marker_text "<careless>" \
 #     --recovery_marker_text "<recovery>" \

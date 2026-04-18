@@ -50,7 +50,6 @@ accelerate launch \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
     --recovery_rollout_len 256 \
-    --normal_decoding greedy \
     --careless_marker_text "<careless>" \
     --recovery_marker_text "<recovery>" \
     --gradient_checkpointing \
@@ -62,5 +61,10 @@ accelerate launch \
     --lora_r 64 \
     --lora_alpha 128 \
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj in_proj_qkv in_proj_z in_proj_a in_proj_b out_proj \
+    --temperature 1.1 \
+    --top_p 0.95 \
+    --top_k 20 \
+    --rollout_decoding sample \
+    --jsd_token_clip 0.05 \
     --wandb_project LinearOPSD \
     --report_to wandb

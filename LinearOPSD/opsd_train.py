@@ -137,10 +137,6 @@ class CustomScriptArguments(ScriptArguments):
         default=8,
         metadata={"help": "Recovery rollout length. This also defines the KD supervision length."},
     )
-    normal_decoding: str = field(
-        default="greedy",
-        metadata={"help": "Decoding used for the recovery rollout. Initial implementation supports `greedy` only."},
-    )
     careless_marker_text: str = field(
         default="<careless>",
         metadata={"help": "Inline marker inserted before the careless prefix in the teacher-visible trace."},
@@ -248,7 +244,6 @@ if __name__ == "__main__":
     assert script_args.careless_top_k >= 0, "careless_top_k must be non-negative"
     assert script_args.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
     assert script_args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
-    assert script_args.normal_decoding in {"greedy"}, f"Unsupported normal_decoding={script_args.normal_decoding}"
     assert script_args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
     assert script_args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
     if script_args.use_tinker_loss:
@@ -349,7 +344,6 @@ if __name__ == "__main__":
                 "careless_top_k": script_args.careless_top_k if script_args.careless_top_k > 0 else None,
                 "careless_resample_trials": script_args.careless_resample_trials,
                 "recovery_rollout_len": script_args.recovery_rollout_len,
-                "normal_decoding": script_args.normal_decoding,
                 "careless_marker_text": script_args.careless_marker_text,
                 "recovery_marker_text": script_args.recovery_marker_text,
                 "use_tinker_loss": script_args.use_tinker_loss,
@@ -456,7 +450,6 @@ if __name__ == "__main__":
         careless_top_k=script_args.careless_top_k,
         careless_resample_trials=script_args.careless_resample_trials,
         recovery_rollout_len=script_args.recovery_rollout_len,
-        normal_decoding=script_args.normal_decoding,
         careless_marker_text=script_args.careless_marker_text,
         recovery_marker_text=script_args.recovery_marker_text,
         top_k_loss=script_args.top_k_loss if script_args.top_k_loss > 0 else None,
@@ -468,9 +461,6 @@ if __name__ == "__main__":
     if training_args.eval_strategy != "no":
         callback_do_sample = script_args.rollout_decoding == "sample"
         callback_temperature = training_args.temperature if callback_do_sample else 1.0
-        if script_args.conditioning_mode == "linear_opsd":
-            callback_do_sample = False
-            callback_temperature = 1.0
 
         generation_config = GenerationConfig(
             max_new_tokens=training_args.max_completion_length,

@@ -300,7 +300,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
 
 
 def _build_sampling_params(args):
-    if args.normal_decoding == "greedy":
+    if args.rollout_decoding == "greedy":
         return SamplingParams(
             temperature=0.0,
             top_p=1.0,
@@ -311,7 +311,7 @@ def _build_sampling_params(args):
             n=1,
         )
 
-    raise AssertionError(f"Unsupported normal_decoding={args.normal_decoding}")
+    raise AssertionError(f"Unsupported rollout_decoding={args.rollout_decoding}")
 
 
 def _append_block(report_lines, title, content):
@@ -378,7 +378,7 @@ def main():
     parser.add_argument("--careless_top_p", type=float, default=0.95)
     parser.add_argument("--careless_top_k", type=int, default=50)
     parser.add_argument("--careless_resample_trials", type=int, default=3)
-    parser.add_argument("--normal_decoding", choices=["greedy"], default="greedy")
+    parser.add_argument("--rollout_decoding", choices=["greedy"], default="greedy")
     parser.add_argument("--recovery_rollout_len", type=int, default=8)
     parser.add_argument("--careless_marker_text", type=str, default="<careless>")
     parser.add_argument("--recovery_marker_text", type=str, default="<recovery>")
