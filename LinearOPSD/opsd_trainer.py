@@ -125,6 +125,24 @@ class OPSDTrainer(SFTTrainer):
         if self.accelerator.is_main_process:
             print(*args, **kwargs)
 
+    def _decode_padded_sequences(self, token_tensor, lengths_tensor):
+        decoded_texts = []
+        for row_idx in range(token_tensor.shape[0]):
+            actual_length = int(lengths_tensor[row_idx].item())
+            token_ids = token_tensor[row_idx, :actual_length].tolist()
+            decoded_texts.append(self.processing_class.decode(token_ids, skip_special_tokens=False))
+        return decoded_texts
+
+    def _decode_generation_completions(self, generated_ids, generated_attention_mask, prompt_lengths):
+        completion_texts = []
+        for row_idx in range(generated_ids.shape[0]):
+            prompt_length = int(prompt_lengths[row_idx].item())
+            completion_ids = generated_ids[row_idx, prompt_length:]
+            completion_mask = generated_attention_mask[row_idx, prompt_length:]
+            valid_completion_ids = completion_ids[completion_mask.bool()].tolist()
+            completion_texts.append(self.processing_class.decode(valid_completion_ids, skip_special_tokens=False))
+        return completion_texts
+
     @staticmethod
     def _set_use_cache_attr(obj, value):
         had_attr = hasattr(obj, "use_cache")
@@ -1005,6 +1023,31 @@ class OPSDTrainer(SFTTrainer):
 
         start_time = time.time()
 
+        student_prompts = inputs["student_prompts"]
+        prompt_lengths = inputs["student_prompt_lengths_per_example"]
+        prompt_attention_mask = inputs.get("student_prompt_attention_mask", None)
+
+        if prompt_attention_mask is None:
+            prompt_attention_mask = torch.ones_like(student_prompts)
+
+        max_prompt_len = student_prompts.shape[1]
+        generation_input_ids = student_prompts
+        generation_attention_mask = prompt_attention_mask
+
+        if not torch.all(prompt_lengths == max_prompt_len):
+            assert pad_token_id is not None, "pad_token_id must be set for variable-length prompt generation"
+
+            generation_input_ids = torch.full_like(student_prompts, pad_token_id)
+            generation_attention_mask = torch.zeros_like(student_prompts)
+
+            # ---- left-pad decoder-only prompts for stable batched generation ----
+            for row_idx in range(student_prompts.shape[0]):
+                actual_length = int(prompt_lengths[row_idx].item())
+                generation_input_ids[row_idx, max_prompt_len - actual_length :] = student_prompts[
+                    row_idx, :actual_length
+                ]
+                generation_attention_mask[row_idx, max_prompt_len - actual_length :] = 1
+
         # Temporarily enable KV cache for generation if it was disabled for training
         model_had_use_cache, original_use_cache = self._set_use_cache_attr(model.config, True)
         gen_had_use_cache, original_gen_use_cache = self._set_use_cache_attr(generation_config, True)
@@ -1023,14 +1066,15 @@ class OPSDTrainer(SFTTrainer):
         # Generate output with respect to the student prompt only
         try:
             generated_outputs = model.generate(
-                input_ids=inputs["student_prompts"],
-                attention_mask=inputs.get("student_prompt_attention_mask", None),
+                input_ids=generation_input_ids,
+                attention_mask=generation_attention_mask,
                 generation_config=generation_config,
                 return_dict_in_generate=True,
                 use_cache=True,
             )
             # Get the generated token IDs
-            generated_tokens = generated_outputs.sequences
+            completion_tokens = generated_outputs.sequences[:, max_prompt_len:]
+            generated_tokens = torch.cat([student_prompts, completion_tokens], dim=1)
         finally:
             # Restore original settings
             self._restore_use_cache_attr(model.config, model_had_use_cache, original_use_cache)
@@ -1046,7 +1090,8 @@ class OPSDTrainer(SFTTrainer):
             f"generation done - elapsed time: {elapsed_time:.2f}s, prompts: {num_prompts}, total tokens: {num_tokens}, avg length: {avg_completion_length}, speed: {tokens_per_sec:.1f} tok/s"
         )
 
-        new_attention_mask = torch.ones_like(generated_tokens)
+        completion_attention_mask = torch.ones_like(completion_tokens)
+        new_attention_mask = torch.cat([prompt_attention_mask, completion_attention_mask], dim=1)
         new_labels = generated_tokens.clone()
 
         if pad_token_id is not None:
@@ -1578,21 +1623,21 @@ class OPSDTrainer(SFTTrainer):
             result = self._generate_on_policy_outputs_vllm(
                 inputs, self.generation_config, self.processing_class.pad_token_id
             )
-            generated_ids, generated_attention_mask, _, prompt_texts, completion_texts = result
+            generated_ids, generated_attention_mask, _, _, completion_texts = result
+            prompt_texts = self._decode_padded_sequences(
+                inputs["student_prompts"], inputs["student_prompt_lengths_per_example"]
+            )
         else:
             with unwrap_model_for_generation(model, self.accelerator) as unwrapped_model:
                 result = self.generate_on_policy_outputs(
                     unwrapped_model, inputs, self.generation_config, self.processing_class.pad_token_id
                 )
                 generated_ids, generated_attention_mask, _ = result
-                # Decode for logging
-                prompt_texts = self.processing_class.batch_decode(
-                    inputs["student_prompts"], skip_special_tokens=False
+                prompt_texts = self._decode_padded_sequences(
+                    inputs["student_prompts"], inputs["student_prompt_lengths_per_example"]
                 )
-                student_prompt_len = inputs["student_prompt_length"]
-                completion_ids = generated_ids[:, student_prompt_len:]
-                completion_texts = self.processing_class.batch_decode(
-                    completion_ids, skip_special_tokens=False
+                completion_texts = self._decode_generation_completions(
+                    generated_ids, generated_attention_mask, inputs["student_prompt_lengths_per_example"]
                 )
 
         # Get batch-level student prompt length
@@ -1639,10 +1684,32 @@ class OPSDTrainer(SFTTrainer):
         self._textual_logs["completion"].extend(gather_object(completion_texts))
 
         # Collect generation outputs for saving
-        for prompt, completion in zip(prompt_texts, completion_texts):
-            self._generation_outputs_buffer.append(
-                {"step": self.state.global_step, "prompt": prompt, "completion": completion}
+        teacher_prompt_texts = None
+        if self.conditioning_mode == "linear_opsd":
+            teacher_prompt_texts = self._decode_padded_sequences(
+                inputs["teacher_prompts"], inputs["teacher_prompt_lengths_per_example"]
             )
+
+        for sample_idx, (prompt, completion) in enumerate(zip(prompt_texts, completion_texts)):
+            record = {
+                "step": self.state.global_step,
+                "prompt": prompt,
+                "completion": completion,
+            }
+
+            if teacher_prompt_texts is not None:
+                metadata = inputs["linear_opsd_metadata"][sample_idx]
+                record["teacher_prompt"] = teacher_prompt_texts[sample_idx]
+                record["gold_prefix_text"] = self.processing_class.decode(
+                    metadata["gold_prefix_ids"], skip_special_tokens=False
+                )
+                record["careless_prefix_text"] = self.processing_class.decode(
+                    metadata["careless_token_ids"], skip_special_tokens=False
+                )
+                record["careless_deviated"] = bool(metadata["careless_deviated"])
+                record["skip_kd"] = bool(metadata["skip_kd"])
+
+            self._generation_outputs_buffer.append(record)
 
         # Occasionally print student's generation with 1% probability
         if self.accelerator.is_main_process and random.random() < 0.01:

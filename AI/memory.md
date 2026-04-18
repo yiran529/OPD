@@ -259,6 +259,11 @@
 - The scorer now compares the conditional logprob of each choice's actual text continuation after `Answer:`.
 - Prediction output still reports `pred_label` / `gold_label`; only the scoring continuation changed.
 
+## 2026-04-18-00:00 : LinearOPSD generation logging trims padding and batched decode uses left-padded prompts
+- `LinearOPSD/opsd_trainer.py` no longer decodes padded `student_prompts` directly into `generations_step_*.json`; prompt/completion logs are now trimmed by per-example lengths so `<|endoftext|>` padding tails do not dominate saved samples.
+- For non-vLLM generation, batched decoder-only rollout now left-pads prompts only for the `model.generate(...)` call, then maps completions back onto the existing right-padded training layout.
+- Reason: the trainer stores prompts in right-padded form for explicit label masking, but feeding those right-padded prompts directly into decoder-only `generate(...)` makes eos/pad tokens act like the effective sequence tail and can corrupt rollout quality.
+
 ## 2026-04-02-10:30 : Separate memory-pollution experiment package
 - Added a new top-level package `memory_pollution/` so the memory-pollution benchmark code stays isolated from the OPD training stack under `opd/` and the older downstream eval helpers under `eval/`.
 - The first implementation supports ARC multiple-choice evaluation with deterministic random-token insertion perturbations and optional FLA cache state-drift measurement.
