@@ -285,6 +285,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
         example = {
             "dataset_index": index,
             "problem": problem,
+            "problem_prompt_text": _decode_ids(tokenizer, problem_prompt_ids),
             "student_seen_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
             "teacher_seen_prefix_text": teacher_prompt_prefix_text + rollout["teacher_trace_prefix_text"],
             "gold_prefix_length": int(rollout["gold_prefix_length"]),
@@ -320,6 +321,42 @@ def _append_block(report_lines, title, content):
     report_lines.append(content if content else "(empty)")
 
 
+def _generate_with_optional_lora(llm, prompts, sampling_params, lora_request):
+    if lora_request is not None:
+        return llm.generate(prompts, sampling_params, lora_request=lora_request, use_tqdm=True)
+    return llm.generate(prompts, sampling_params, use_tqdm=True)
+
+
+def _run_inspection_rollouts(llm, examples, sampling_params, lora_request):
+    rollout_specs = [
+        ("problem", "problem_prompt_text"),
+        ("student", "student_seen_prefix_text"),
+        ("teacher", "teacher_seen_prefix_text"),
+    ]
+
+    prompts = []
+    prompt_specs = []
+    for example_idx, example in enumerate(examples):
+        for rollout_name, prompt_key in rollout_specs:
+            prompts.append(example[prompt_key])
+            prompt_specs.append((example_idx, rollout_name, prompt_key))
+
+    outputs = _generate_with_optional_lora(
+        llm=llm,
+        prompts=prompts,
+        sampling_params=sampling_params,
+        lora_request=lora_request,
+    )
+
+    for output, (example_idx, rollout_name, prompt_key) in zip(outputs, prompt_specs):
+        generated = output.outputs[0]
+        example = examples[example_idx]
+        prefix_text = example[prompt_key]
+        example[f"{rollout_name}_rollout_text"] = generated.text
+        example[f"{rollout_name}_rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
+        example[f"{rollout_name}_full_text"] = prefix_text + generated.text
+
+
 def _write_outputs(examples, output_jsonl):
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     output_txt = output_jsonl.with_suffix(".txt")
@@ -327,8 +364,12 @@ def _write_outputs(examples, output_jsonl):
     with output_jsonl.open("w", encoding="utf-8") as handle:
         for example in examples:
             compact_example = {
+                "problem_full_text": example.get("problem_full_text", ""),
                 "student_full_text": example.get("student_full_text", ""),
                 "teacher_full_text": example.get("teacher_full_text", ""),
+                "problem_rollout_text": example.get("problem_rollout_text", ""),
+                "student_rollout_text": example.get("student_rollout_text", ""),
+                "teacher_rollout_text": example.get("teacher_rollout_text", ""),
             }
             handle.write(json.dumps(compact_example, ensure_ascii=False) + "\n")
 
@@ -338,7 +379,24 @@ def _write_outputs(examples, output_jsonl):
         report_lines.append("=" * 120)
         report_lines.append(f"EXAMPLE {example['dataset_index']}")
         report_lines.append("=" * 120)
+        report_lines.append(
+            "gold_prefix_length="
+            f"{example['gold_prefix_length']} "
+            "careless_prefix_length="
+            f"{example['careless_prefix_length']} "
+            "careless_deviated="
+            f"{example['careless_deviated']} "
+            "skip_kd="
+            f"{example['skip_kd']}"
+        )
+        _append_block(report_lines, "Problem Prefix", example.get("problem_prompt_text", ""))
+        _append_block(report_lines, "Problem Rollout", example.get("problem_rollout_text", ""))
+        _append_block(report_lines, "Problem Full", example.get("problem_full_text", ""))
+        _append_block(report_lines, "Student Prefix", example.get("student_seen_prefix_text", ""))
+        _append_block(report_lines, "Student Prefix Rollout", example.get("student_rollout_text", ""))
         _append_block(report_lines, "Student Full", example.get("student_full_text", ""))
+        _append_block(report_lines, "Teacher Prefix", example.get("teacher_seen_prefix_text", ""))
+        _append_block(report_lines, "Teacher Prefix Rollout", example.get("teacher_rollout_text", ""))
         _append_block(report_lines, "Teacher Full", example.get("teacher_full_text", ""))
 
     output_txt.write_text("\n".join(report_lines), encoding="utf-8")
@@ -426,18 +484,16 @@ def main():
     examples = _prepare_examples(dataset, tokenizer, hf_model, args.hf_device, args)
 
     sampling_params = _build_sampling_params(args)
-    prompts = [example["student_seen_prefix_text"] for example in examples]
-    if lora_request is not None:
-        outputs = llm.generate(prompts, sampling_params, lora_request=lora_request, use_tqdm=True)
-    else:
-        outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
+    _run_inspection_rollouts(
+        llm=llm,
+        examples=examples,
+        sampling_params=sampling_params,
+        lora_request=lora_request,
+    )
 
-    for example, output in zip(examples, outputs):
-        generated = output.outputs[0]
-        example["recovery_rollout_text"] = generated.text
-        example["recovery_rollout_token_ids"] = [int(token_id) for token_id in generated.token_ids]
-        example["student_full_text"] = example["student_seen_prefix_text"] + generated.text
-        example["teacher_full_text"] = example["teacher_seen_prefix_text"] + generated.text
+    for example in examples:
+        example["recovery_rollout_text"] = example["student_rollout_text"]
+        example["recovery_rollout_token_ids"] = example["student_rollout_token_ids"]
         example["checkpoint_dir"] = args.checkpoint_dir
         example["base_model"] = args.base_model
 
