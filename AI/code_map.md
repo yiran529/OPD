@@ -127,8 +127,10 @@
 - `LinearOPSD/data_collator.py`: keeps original privileged-prompt collation for `conditioning_mode=opsd`; `linear_opsd` now only tokenizes static materials (`problem` prompt ids and `solution` ids) and leaves corruption/prompt construction to trainer time.
 - `LinearOPSD/opsd_trainer.py`: upstream trainer shell with original JSD/tinker paths intact; `conditioning_mode=linear_opsd` now samples a gold prefix, generates a short careless prefix online with the current student, builds teacher prompts with `<careless>` / `<recovery>` markers, then reuses the shared-rollout generation and JSD supervision path for the recovery segment.
 - `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
+- `LinearOPSD/eval/evaluate_gsm8k.py`: Qwen3.5/vLLM GSM8K eval using chat-template prompting, `####` final-answer extraction, numeric exact-match grading, and optional LoRA adapters.
 - `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility for the trainer-time `linear_opsd` path; it loads a local HF pure-text model (for Qwen3.5, explicitly preferring `Qwen3_5ForCausalLM` per the official text-generation path) to sample the same gold-prefix/careless-prefix setup as training, then uses vLLM to separately rollout after the problem prompt, full student prefix, and full teacher prefix, reporting each full trace with `<careless>` / `<recovery>` boundaries.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
+- `LinearOPSD/eval/run_eval_gsm8k.sh`: simple launcher for Qwen3.5 GSM8K eval.
 - `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the LinearOPSD three-way problem/student/teacher prefix rollout inspection script.
 - `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=jsd`, gold-prefix sampling, careless-prefix generation, recovery-rollout KD, and LoRA + colocated vLLM.
 
