@@ -129,7 +129,7 @@
 - `LinearOPSD/eval/evaluate_math.py`: benchmark-style vLLM math eval on external held-out datasets with answer extraction/grading.
 - `LinearOPSD/eval/inspect_linear_opsd_rollout.py`: inspection utility for the trainer-time `linear_opsd` path; it loads a local HF pure-text model (for Qwen3.5, explicitly preferring `Qwen3_5ForCausalLM` per the official text-generation path) to sample the same gold-prefix/careless-prefix setup as training, then uses vLLM to separately rollout after the problem prompt, full student prefix, and full teacher prefix, reporting each full trace with `<careless>` / `<recovery>` boundaries.
 - `LinearOPSD/eval/run_eval.sh`: simple launcher for benchmark math eval.
-- `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the careless-prefix / recovery-rollout inspection script.
+- `LinearOPSD/eval/run_inspect_rollout.sh`: launcher for the LinearOPSD three-way problem/student/teacher prefix rollout inspection script.
 - `LinearOPSD/scripts/run_linear_opsd_qwen35_0p8b.sh`: `AI/ideas/6.md`-aligned training launcher for Qwen3.5-0.8B on OpenThoughts math using `conditioning_mode=linear_opsd`, `loss_mode=jsd`, gold-prefix sampling, careless-prefix generation, recovery-rollout KD, and LoRA + colocated vLLM.
 
 ## Dependencies
