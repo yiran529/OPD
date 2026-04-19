@@ -19,7 +19,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from corruption import build_online_careless_prefix
-from data_collator import _build_problem_prompt_ids, _encode_solution_ids
+from data_collator import _build_student_problem_prompt_ids, _encode_solution_ids
 
 
 def _get_vllm_cache_dtype(llm) -> str:
@@ -252,7 +252,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
         problem = feature["problem"]
         solution = feature["solution"]
 
-        problem_prompt_ids = _build_problem_prompt_ids(tokenizer, problem)
+        problem_prompt_ids = _build_student_problem_prompt_ids(tokenizer, problem)
         solution_ids = _encode_solution_ids(tokenizer, solution)
 
         rollout = build_online_careless_prefix(

@@ -5,14 +5,14 @@ import torch
 from corruption import pad_token_sequences
 
 
-def _build_problem_prompt_ids(tokenizer, problem):
+def _build_student_problem_prompt_ids(tokenizer, problem):
     user_message = f"Problem: {problem}\n\nPlease reason step by step, and put your final answer within \\boxed{{}}."
     messages = [{"role": "user", "content": user_message}]
     prompt_text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=True,
+        enable_thinking=False,
     )
     assert isinstance(prompt_text, str) and prompt_text.strip(), "chat template returned an empty prompt"
     prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
@@ -100,7 +100,7 @@ class SelfDistillationDataCollator:
             problem = feature["problem"]
             solution = feature["solution"]
 
-            prompt_ids = _build_problem_prompt_ids(self.tokenizer, problem)
+            prompt_ids = _build_student_problem_prompt_ids(self.tokenizer, problem)
             assert len(prompt_ids) <= self.max_length, (
                 "linear_opsd problem prompt exceeds max_length. "
                 f"prompt_len={len(prompt_ids)} max_length={self.max_length}"

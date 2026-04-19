@@ -52,7 +52,7 @@ accelerate launch \
     --gold_prefix_ratio_min 0.3 \
     --gold_prefix_ratio_max 0.7 \
     --careless_rollout_len 32 \
-    --careless_temperature 1.5 \
+    --careless_temperature 1.3 \
     --careless_top_p 0.95 \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
@@ -70,4 +70,5 @@ accelerate launch \
     --rollout_decoding sample \
     --jsd_token_clip 0.05 \
     --wandb_project LinearOPSD \
-    --report_to wandb
+    --report_to wandb \
+    --fixed_teacher
