@@ -553,3 +553,17 @@
   - `[left pad inside fixed prompt block][valid prompt][completion]`
   - while keeping the same fixed prompt-block width used by downstream loss slicing.
 - This preserves the existing `student_prompt_length` / `teacher_prompt_length` based loss code, but ensures completion supervision is conditioned on each sample's actual last prompt token instead of a right-padding gap.
+
+## 2026-04-20-00:00 : LinearOPSD protocol cleanup for GSM8K degradation
+- Do not rely on the old `jsd_token_clip=0.05` setting for current LinearOPSD runs; the launchers now pass `--jsd_token_clip 0` so the existing full-vocab JSD path is not clipped by the known unsafe component-level clip.
+- `linear_opsd` now has separate chat-template switches for student and teacher prompts:
+  - `linear_opsd_student_enable_thinking`
+  - `linear_opsd_teacher_enable_thinking`
+  Both default to false so non-thinking sanity runs can avoid mixing teacher thinking-context style into student continuations.
+- The teacher-visible sampled-tail trace no longer uses XML-like `<careless>` / `<recovery>` boundaries by default. The sampled tail is marked only for the teacher with `[recent sampled tail begins here]`; there is no recovery marker before the KD segment.
+- Teacher prompts were made more continuation-oriented: the teacher gets the reference solution as private context and a lightweight note that the marked recent tail may contain a local inconsistency, then is asked to continue directly with the next math step.
+- `linear_opsd` now samples prefix mode per example:
+  - clean: no sampled tail, KD from a gold prefix;
+  - mild: short sampled tail from `linear_opsd_mild_careless_rollout_len`;
+  - hard: sampled tail from `careless_rollout_len`.
+  This is intended to prevent every training example from looking like an explicit correction scenario.

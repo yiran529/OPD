@@ -10,8 +10,9 @@ cd "$(dirname "$0")/.."
 # - loss_mode=jsd
 # - beta=0
 # - gold prefix ratio in [0.3, 0.7]
-# - careless prefix length = 8
-# - recovery rollout length = 8
+# - clean/mild/hard prefix mixture
+# - hard sampled-tail length = 8
+# - recovery rollout length = 16
 
 # --num_train_epochs 3 \
 # --max_completion_length 8 \
@@ -51,14 +52,16 @@ accelerate launch \
     --loss_mode jsd \
     --gold_prefix_ratio_min 0.3 \
     --gold_prefix_ratio_max 0.7 \
-    --careless_rollout_len 32 \
+    --linear_opsd_clean_ratio 0.25 \
+    --linear_opsd_mild_ratio 0.50 \
+    --linear_opsd_mild_careless_rollout_len 4 \
+    --careless_rollout_len 8 \
     --careless_temperature 1.3 \
     --careless_top_p 0.95 \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
-    --recovery_rollout_len 256 \
-    --careless_marker_text "<careless>" \
-    --recovery_marker_text "<recovery>" \
+    --recovery_rollout_len 16 \
+    --careless_marker_text "[recent sampled tail begins here]" \
     --gradient_checkpointing \
     --use_peft \
     --lora_r 64 \
@@ -67,8 +70,8 @@ accelerate launch \
     --temperature 1.1 \
     --top_p 0.95 \
     --top_k 20 \
-    --rollout_decoding sample \
-    --jsd_token_clip 0.05 \
+    --rollout_decoding greedy \
+    --jsd_token_clip 0 \
     --wandb_project LinearOPSD \
     --report_to wandb \
     --fixed_teacher

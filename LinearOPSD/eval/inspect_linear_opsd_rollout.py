@@ -252,7 +252,11 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
         problem = feature["problem"]
         solution = feature["solution"]
 
-        problem_prompt_ids = _build_student_problem_prompt_ids(tokenizer, problem)
+        problem_prompt_ids = _build_student_problem_prompt_ids(
+            tokenizer,
+            problem,
+            enable_thinking=args.linear_opsd_student_enable_thinking,
+        )
         solution_ids = _encode_solution_ids(tokenizer, solution)
 
         rollout = build_online_careless_prefix(
@@ -264,6 +268,9 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             solution_ids=solution_ids,
             gold_prefix_ratio_min=args.gold_prefix_ratio_min,
             gold_prefix_ratio_max=args.gold_prefix_ratio_max,
+            clean_ratio=args.linear_opsd_clean_ratio,
+            mild_ratio=args.linear_opsd_mild_ratio,
+            mild_careless_rollout_len=args.linear_opsd_mild_careless_rollout_len,
             careless_rollout_len=args.careless_rollout_len,
             careless_temperature=args.careless_temperature,
             careless_top_p=args.careless_top_p,
@@ -279,7 +286,7 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             teacher_messages,
             tokenize=False,
             add_generation_prompt=True,
-            enable_thinking=True,
+            enable_thinking=args.linear_opsd_teacher_enable_thinking,
         )
 
         example = {
@@ -290,6 +297,8 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             "teacher_seen_prefix_text": teacher_prompt_prefix_text + rollout["teacher_trace_prefix_text"],
             "gold_prefix_length": int(rollout["gold_prefix_length"]),
             "careless_prefix_length": len(rollout["careless_token_ids"]),
+            "mixture_mode": rollout["mixture_mode"],
+            "active_careless_rollout_len": int(rollout["active_careless_rollout_len"]),
             "careless_deviated": bool(rollout["careless_deviated"]),
             "careless_resample_count": int(rollout["careless_resample_count"]),
             "skip_kd": bool(rollout["skip_kd"]),
@@ -384,6 +393,10 @@ def _write_outputs(examples, output_jsonl):
             f"{example['gold_prefix_length']} "
             "careless_prefix_length="
             f"{example['careless_prefix_length']} "
+            "mixture_mode="
+            f"{example['mixture_mode']} "
+            "active_careless_rollout_len="
+            f"{example['active_careless_rollout_len']} "
             "careless_deviated="
             f"{example['careless_deviated']} "
             "skip_kd="
@@ -431,6 +444,11 @@ def main():
     parser.add_argument("--hf_device", type=str, default="cpu", help="Device for the HF careless-prefix model.")
     parser.add_argument("--gold_prefix_ratio_min", type=float, default=0.3)
     parser.add_argument("--gold_prefix_ratio_max", type=float, default=0.7)
+    parser.add_argument("--linear_opsd_clean_ratio", type=float, default=0.0)
+    parser.add_argument("--linear_opsd_mild_ratio", type=float, default=0.0)
+    parser.add_argument("--linear_opsd_mild_careless_rollout_len", type=int, default=4)
+    parser.add_argument("--linear_opsd_student_enable_thinking", action="store_true")
+    parser.add_argument("--linear_opsd_teacher_enable_thinking", action="store_true")
     parser.add_argument("--careless_rollout_len", type=int, default=8)
     parser.add_argument("--careless_temperature", type=float, default=1.3)
     parser.add_argument("--careless_top_p", type=float, default=0.95)
@@ -438,7 +456,7 @@ def main():
     parser.add_argument("--careless_resample_trials", type=int, default=3)
     parser.add_argument("--rollout_decoding", choices=["greedy"], default="greedy")
     parser.add_argument("--recovery_rollout_len", type=int, default=8)
-    parser.add_argument("--careless_marker_text", type=str, default="<careless>")
+    parser.add_argument("--careless_marker_text", type=str, default="[recent sampled tail begins here]")
     parser.add_argument("--recovery_marker_text", type=str, default="<recovery>")
     parser.add_argument(
         "--output_jsonl",
@@ -451,6 +469,14 @@ def main():
     assert args.num_examples > 0, "num_examples must be positive"
     assert 0.0 <= args.gold_prefix_ratio_min <= args.gold_prefix_ratio_max <= 1.0, (
         "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
+    )
+    assert 0.0 <= args.linear_opsd_clean_ratio <= 1.0, "linear_opsd_clean_ratio must be in [0, 1]"
+    assert 0.0 <= args.linear_opsd_mild_ratio <= 1.0, "linear_opsd_mild_ratio must be in [0, 1]"
+    assert args.linear_opsd_clean_ratio + args.linear_opsd_mild_ratio <= 1.0, (
+        "linear_opsd_clean_ratio + linear_opsd_mild_ratio must be <= 1"
+    )
+    assert args.linear_opsd_mild_careless_rollout_len > 0, (
+        "linear_opsd_mild_careless_rollout_len must be positive"
     )
     assert args.careless_rollout_len > 0, "careless_rollout_len must be positive"
     assert args.careless_temperature > 0.0, "careless_temperature must be positive"

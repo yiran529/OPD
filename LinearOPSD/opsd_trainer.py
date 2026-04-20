@@ -246,13 +246,18 @@ class OPSDTrainer(SFTTrainer):
         rollout_decoding: str = "sample",
         gold_prefix_ratio_min: float = 0.3,
         gold_prefix_ratio_max: float = 0.7,
+        linear_opsd_clean_ratio: float = 0.0,
+        linear_opsd_mild_ratio: float = 0.0,
+        linear_opsd_mild_careless_rollout_len: int = 4,
+        linear_opsd_student_enable_thinking: bool = False,
+        linear_opsd_teacher_enable_thinking: bool = False,
         careless_rollout_len: int = 8,
         careless_temperature: float = 1.3,
         careless_top_p: float = 0.95,
         careless_top_k: int = 50,
         careless_resample_trials: int = 3,
         recovery_rollout_len: int = 8,
-        careless_marker_text: str = "<careless>",
+        careless_marker_text: str = "[recent sampled tail begins here]",
         recovery_marker_text: str = "<recovery>",
         top_k_loss: int | None = None,
         jsd_token_clip: float | None = None,
@@ -273,6 +278,7 @@ class OPSDTrainer(SFTTrainer):
                 reason_first=reason_first,
                 conditioning_mode=conditioning_mode,
                 rollout_len=args.max_completion_length,
+                linear_opsd_student_enable_thinking=linear_opsd_student_enable_thinking,
             )
 
         args.remove_unused_columns = False
@@ -307,6 +313,11 @@ class OPSDTrainer(SFTTrainer):
         self.rollout_decoding = rollout_decoding
         self.gold_prefix_ratio_min = gold_prefix_ratio_min
         self.gold_prefix_ratio_max = gold_prefix_ratio_max
+        self.linear_opsd_clean_ratio = linear_opsd_clean_ratio
+        self.linear_opsd_mild_ratio = linear_opsd_mild_ratio
+        self.linear_opsd_mild_careless_rollout_len = linear_opsd_mild_careless_rollout_len
+        self.linear_opsd_student_enable_thinking = linear_opsd_student_enable_thinking
+        self.linear_opsd_teacher_enable_thinking = linear_opsd_teacher_enable_thinking
         self.careless_rollout_len = careless_rollout_len
         self.careless_temperature = careless_temperature
         self.careless_top_p = careless_top_p
@@ -330,6 +341,14 @@ class OPSDTrainer(SFTTrainer):
         if self.conditioning_mode == "linear_opsd":
             assert 0.0 <= self.gold_prefix_ratio_min <= self.gold_prefix_ratio_max <= 1.0, (
                 "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
+            )
+            assert 0.0 <= self.linear_opsd_clean_ratio <= 1.0, "linear_opsd_clean_ratio must be in [0, 1]"
+            assert 0.0 <= self.linear_opsd_mild_ratio <= 1.0, "linear_opsd_mild_ratio must be in [0, 1]"
+            assert self.linear_opsd_clean_ratio + self.linear_opsd_mild_ratio <= 1.0, (
+                "linear_opsd_clean_ratio + linear_opsd_mild_ratio must be <= 1"
+            )
+            assert self.linear_opsd_mild_careless_rollout_len > 0, (
+                "linear_opsd_mild_careless_rollout_len must be positive"
             )
             assert self.careless_rollout_len > 0, "careless_rollout_len must be positive"
             assert self.careless_temperature > 0.0, "careless_temperature must be positive"
@@ -803,6 +822,9 @@ class OPSDTrainer(SFTTrainer):
                     solution_ids=solution_ids,
                     gold_prefix_ratio_min=self.gold_prefix_ratio_min,
                     gold_prefix_ratio_max=self.gold_prefix_ratio_max,
+                    clean_ratio=self.linear_opsd_clean_ratio,
+                    mild_ratio=self.linear_opsd_mild_ratio,
+                    mild_careless_rollout_len=self.linear_opsd_mild_careless_rollout_len,
                     careless_rollout_len=self.careless_rollout_len,
                     careless_temperature=self.careless_temperature,
                     careless_top_p=self.careless_top_p,
@@ -823,7 +845,7 @@ class OPSDTrainer(SFTTrainer):
                     teacher_messages,
                     tokenize=False,
                     add_generation_prompt=True,
-                    enable_thinking=True,
+                    enable_thinking=self.linear_opsd_teacher_enable_thinking,
                 )
                 teacher_prompt_prefix_ids = self.processing_class(
                     teacher_prompt_prefix_text,
@@ -1731,6 +1753,8 @@ class OPSDTrainer(SFTTrainer):
                 record["careless_prefix_text"] = self.processing_class.decode(
                     metadata["careless_token_ids"], skip_special_tokens=False
                 )
+                record["mixture_mode"] = metadata["mixture_mode"]
+                record["active_careless_rollout_len"] = int(metadata["active_careless_rollout_len"])
                 record["careless_deviated"] = bool(metadata["careless_deviated"])
                 record["skip_kd"] = bool(metadata["skip_kd"])
 

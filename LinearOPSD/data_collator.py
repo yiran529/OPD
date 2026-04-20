@@ -5,14 +5,14 @@ import torch
 from corruption import pad_token_sequences
 
 
-def _build_student_problem_prompt_ids(tokenizer, problem):
+def _build_student_problem_prompt_ids(tokenizer, problem, enable_thinking=False):
     user_message = f"Problem: {problem}\n\nPlease reason step by step, and put your final answer within \\boxed{{}}."
     messages = [{"role": "user", "content": user_message}]
     prompt_text = tokenizer.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
-        enable_thinking=False,
+        enable_thinking=enable_thinking,
     )
     assert isinstance(prompt_text, str) and prompt_text.strip(), "chat template returned an empty prompt"
     prompt_ids = tokenizer(prompt_text, add_special_tokens=False)["input_ids"]
@@ -49,12 +49,14 @@ class SelfDistillationDataCollator:
         reason_first=True,
         conditioning_mode="opsd",
         rollout_len=128,
+        linear_opsd_student_enable_thinking=False,
     ):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.reason_first = reason_first
         self.conditioning_mode = conditioning_mode
         self.rollout_len = rollout_len
+        self.linear_opsd_student_enable_thinking = linear_opsd_student_enable_thinking
         self.is_main_process = int(os.environ.get("RANK", "0")) == 0
 
         assert self.conditioning_mode in {"opsd", "linear_opsd"}, (
@@ -84,6 +86,11 @@ class SelfDistillationDataCollator:
             print(f"[DataCollator] Set padding_side to: {self.tokenizer.padding_side}")
             print(f"[DataCollator] Conditioning mode: {self.conditioning_mode}")
             print(f"[DataCollator] Reason first mode: {self.reason_first}")
+            if self.conditioning_mode == "linear_opsd":
+                print(
+                    "[DataCollator] LinearOPSD student thinking mode: "
+                    f"{self.linear_opsd_student_enable_thinking}"
+                )
 
     def __call__(self, features):
         if self.conditioning_mode == "linear_opsd":
@@ -100,7 +107,11 @@ class SelfDistillationDataCollator:
             problem = feature["problem"]
             solution = feature["solution"]
 
-            prompt_ids = _build_student_problem_prompt_ids(self.tokenizer, problem)
+            prompt_ids = _build_student_problem_prompt_ids(
+                self.tokenizer,
+                problem,
+                enable_thinking=self.linear_opsd_student_enable_thinking,
+            )
             assert len(prompt_ids) <= self.max_length, (
                 "linear_opsd problem prompt exceeds max_length. "
                 f"prompt_len={len(prompt_ids)} max_length={self.max_length}"

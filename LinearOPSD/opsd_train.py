@@ -113,9 +113,29 @@ class CustomScriptArguments(ScriptArguments):
         default=0.7,
         metadata={"help": "Maximum ratio for sampling the gold prefix length in `conditioning_mode=linear_opsd`."},
     )
+    linear_opsd_clean_ratio: float = field(
+        default=0.0,
+        metadata={"help": "Fraction of linear_opsd samples that use a clean gold prefix with no sampled tail."},
+    )
+    linear_opsd_mild_ratio: float = field(
+        default=0.0,
+        metadata={"help": "Fraction of linear_opsd samples that use the mild sampled-tail length."},
+    )
+    linear_opsd_mild_careless_rollout_len: int = field(
+        default=4,
+        metadata={"help": "Sampled-tail length for mild linear_opsd examples."},
+    )
+    linear_opsd_student_enable_thinking: bool = field(
+        default=False,
+        metadata={"help": "Apply Qwen thinking-mode chat template to linear_opsd student prompts."},
+    )
+    linear_opsd_teacher_enable_thinking: bool = field(
+        default=False,
+        metadata={"help": "Apply Qwen thinking-mode chat template to linear_opsd teacher prompts."},
+    )
     careless_rollout_len: int = field(
         default=8,
-        metadata={"help": "Number of careless decoding tokens generated after the gold prefix."},
+        metadata={"help": "Number of sampled-tail tokens for hard linear_opsd examples."},
     )
     careless_temperature: float = field(
         default=1.3,
@@ -138,8 +158,8 @@ class CustomScriptArguments(ScriptArguments):
         metadata={"help": "Recovery rollout length. This also defines the KD supervision length."},
     )
     careless_marker_text: str = field(
-        default="<careless>",
-        metadata={"help": "Inline marker inserted before the careless prefix in the teacher-visible trace."},
+        default="[recent sampled tail begins here]",
+        metadata={"help": "Teacher-visible marker inserted before the sampled tail."},
     )
     recovery_marker_text: str = field(
         default="<recovery>",
@@ -237,6 +257,14 @@ if __name__ == "__main__":
     )
     assert 0.0 <= script_args.gold_prefix_ratio_min <= script_args.gold_prefix_ratio_max <= 1.0, (
         "gold_prefix ratios must satisfy 0 <= min <= max <= 1"
+    )
+    assert 0.0 <= script_args.linear_opsd_clean_ratio <= 1.0, "linear_opsd_clean_ratio must be in [0, 1]"
+    assert 0.0 <= script_args.linear_opsd_mild_ratio <= 1.0, "linear_opsd_mild_ratio must be in [0, 1]"
+    assert script_args.linear_opsd_clean_ratio + script_args.linear_opsd_mild_ratio <= 1.0, (
+        "linear_opsd_clean_ratio + linear_opsd_mild_ratio must be <= 1"
+    )
+    assert script_args.linear_opsd_mild_careless_rollout_len > 0, (
+        "linear_opsd_mild_careless_rollout_len must be positive"
     )
     assert script_args.careless_rollout_len > 0, "careless_rollout_len must be positive"
     assert script_args.careless_temperature > 0.0, "careless_temperature must be positive"
@@ -338,6 +366,14 @@ if __name__ == "__main__":
                 "rollout_decoding": script_args.rollout_decoding,
                 "gold_prefix_ratio_min": script_args.gold_prefix_ratio_min,
                 "gold_prefix_ratio_max": script_args.gold_prefix_ratio_max,
+                "linear_opsd_clean_ratio": script_args.linear_opsd_clean_ratio,
+                "linear_opsd_mild_ratio": script_args.linear_opsd_mild_ratio,
+                "linear_opsd_hard_ratio": 1.0
+                - script_args.linear_opsd_clean_ratio
+                - script_args.linear_opsd_mild_ratio,
+                "linear_opsd_mild_careless_rollout_len": script_args.linear_opsd_mild_careless_rollout_len,
+                "linear_opsd_student_enable_thinking": script_args.linear_opsd_student_enable_thinking,
+                "linear_opsd_teacher_enable_thinking": script_args.linear_opsd_teacher_enable_thinking,
                 "careless_rollout_len": script_args.careless_rollout_len,
                 "careless_temperature": script_args.careless_temperature,
                 "careless_top_p": script_args.careless_top_p,
@@ -444,6 +480,11 @@ if __name__ == "__main__":
         rollout_decoding=script_args.rollout_decoding,
         gold_prefix_ratio_min=script_args.gold_prefix_ratio_min,
         gold_prefix_ratio_max=script_args.gold_prefix_ratio_max,
+        linear_opsd_clean_ratio=script_args.linear_opsd_clean_ratio,
+        linear_opsd_mild_ratio=script_args.linear_opsd_mild_ratio,
+        linear_opsd_mild_careless_rollout_len=script_args.linear_opsd_mild_careless_rollout_len,
+        linear_opsd_student_enable_thinking=script_args.linear_opsd_student_enable_thinking,
+        linear_opsd_teacher_enable_thinking=script_args.linear_opsd_teacher_enable_thinking,
         careless_rollout_len=script_args.careless_rollout_len,
         careless_temperature=script_args.careless_temperature,
         careless_top_p=script_args.careless_top_p,

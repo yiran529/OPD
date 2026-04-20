@@ -72,13 +72,13 @@ def build_teacher_trace_prefix_text(
     gold_prefix_ids,
     careless_token_ids,
     careless_marker_text,
-    recovery_marker_text,
+    has_sampled_tail,
 ):
     parts = []
     _append_with_space(parts, _decode_ids(tokenizer, gold_prefix_ids))
-    _append_with_space(parts, careless_marker_text)
-    _append_with_space(parts, _decode_ids(tokenizer, careless_token_ids))
-    _append_with_space(parts, recovery_marker_text)
+    if has_sampled_tail:
+        _append_with_space(parts, careless_marker_text)
+        _append_with_space(parts, _decode_ids(tokenizer, careless_token_ids))
     if parts and not parts[-1][-1].isspace():
         parts.append(" ")
     return "".join(parts)
@@ -88,20 +88,30 @@ def build_teacher_user_message(
     problem,
     solution,
     careless_marker_text,
-    recovery_marker_text,
+    has_sampled_tail,
 ):
+    if has_sampled_tail:
+        continuation_instruction = (
+            "\n\nUse the reference solution only as private context for continuing the partial solution below. "
+            f'The marker "{careless_marker_text}" indicates that the short tail after it may contain a local '
+            "mathematical or wording inconsistency. Continue from exactly where the partial solution stops, "
+            "in the style of a normal math solution. If the recent tail is inconsistent, continue in a way "
+            "that restores mathematical coherence. Continue directly with the next math step.\n\n"
+            "Here is the partial solution to continue:\n"
+        )
+    else:
+        continuation_instruction = (
+            "\n\nUse the reference solution only as private context for continuing the partial solution below. "
+            "Continue from exactly where the partial solution stops, in the style of a normal math solution. "
+            "Continue directly with the next math step.\n\n"
+            "Here is the partial solution to continue:\n"
+        )
+
     return (
         f"Problem: {problem}\n\n"
         f"Here is a reference solution to this problem:\n"
         f"=== Reference Solution Begin ===\n{solution}\n=== Reference Solution End ===\n"
-        "\n\nAfter reading the reference solution above, make sure you truly understand "
-        "the reasoning behind each step. Do not copy it verbatim. "
-        f"In the student's trace below, the text after {careless_marker_text} was generated "
-        "with a more careless decoding strategy from an otherwise correct prefix, and the text after "
-        f"{recovery_marker_text} is the student's subsequent recovery rollout under normal decoding. "
-        "Use the reference solution to judge where the student has drifted and provide a better "
-        "next-token distribution while continuing the same trajectory.\n\n"
-        "Here is the student's current reasoning trace:\n"
+        f"{continuation_instruction}"
     )
 
 
@@ -151,6 +161,9 @@ def build_online_careless_prefix(
     solution_ids,
     gold_prefix_ratio_min,
     gold_prefix_ratio_max,
+    clean_ratio,
+    mild_ratio,
+    mild_careless_rollout_len,
     careless_rollout_len,
     careless_temperature,
     careless_top_p,
@@ -162,6 +175,10 @@ def build_online_careless_prefix(
 ):
     solution_length = len(solution_ids)
     assert solution_length > 0, "solution_ids must be non-empty"
+    assert 0.0 <= clean_ratio <= 1.0, "clean_ratio must be in [0, 1]"
+    assert 0.0 <= mild_ratio <= 1.0, "mild_ratio must be in [0, 1]"
+    assert clean_ratio + mild_ratio <= 1.0, "clean_ratio + mild_ratio must be <= 1"
+    assert mild_careless_rollout_len > 0, "mild_careless_rollout_len must be positive"
     assert careless_rollout_len > 0, "careless_rollout_len must be positive"
     assert careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
     assert careless_marker_text.strip(), "careless_marker_text must be non-empty"
@@ -174,44 +191,58 @@ def build_online_careless_prefix(
     )
     gold_prefix_ids = list(solution_ids[:gold_prefix_length])
     prompt_ids = list(problem_prompt_ids) + gold_prefix_ids
-    gold_target_ids = list(solution_ids[gold_prefix_length : gold_prefix_length + careless_rollout_len])
-    assert gold_target_ids, "gold prefix consumed the full solution; expected at least one target token"
 
-    careless_token_ids = None
+    mode_sample = random.random()
+    if mode_sample < clean_ratio:
+        mixture_mode = "clean"
+        active_careless_rollout_len = 0
+    elif mode_sample < clean_ratio + mild_ratio:
+        mixture_mode = "mild"
+        active_careless_rollout_len = mild_careless_rollout_len
+    else:
+        mixture_mode = "hard"
+        active_careless_rollout_len = careless_rollout_len
+
+    gold_target_ids = list(solution_ids[gold_prefix_length : gold_prefix_length + active_careless_rollout_len])
+    if active_careless_rollout_len > 0:
+        assert gold_target_ids, "gold prefix consumed the full solution; expected at least one target token"
+
+    careless_token_ids = []
     careless_deviated = False
     resample_count = 0
 
-    for attempt_idx in range(careless_resample_trials + 1):
-        candidate_ids = _generate_careless_tokens(
-            model=model,
-            prompt_ids=prompt_ids,
-            tokenizer=tokenizer,
-            careless_rollout_len=careless_rollout_len,
-            careless_temperature=careless_temperature,
-            careless_top_p=careless_top_p,
-            careless_top_k=careless_top_k,
-            device=device,
-        )
-        compare_len = min(len(candidate_ids), len(gold_target_ids))
-        exact_prefix_match = compare_len > 0 and candidate_ids[:compare_len] == gold_target_ids[:compare_len]
-        candidate_deviated = (not exact_prefix_match) or (len(candidate_ids) > len(gold_target_ids))
+    if active_careless_rollout_len > 0:
+        for attempt_idx in range(careless_resample_trials + 1):
+            candidate_ids = _generate_careless_tokens(
+                model=model,
+                prompt_ids=prompt_ids,
+                tokenizer=tokenizer,
+                careless_rollout_len=active_careless_rollout_len,
+                careless_temperature=careless_temperature,
+                careless_top_p=careless_top_p,
+                careless_top_k=careless_top_k,
+                device=device,
+            )
+            compare_len = min(len(candidate_ids), len(gold_target_ids))
+            exact_prefix_match = compare_len > 0 and candidate_ids[:compare_len] == gold_target_ids[:compare_len]
+            candidate_deviated = (not exact_prefix_match) or (len(candidate_ids) > len(gold_target_ids))
 
-        careless_token_ids = candidate_ids
-        careless_deviated = candidate_deviated
-        if candidate_deviated:
-            resample_count = attempt_idx
-            break
-        resample_count = attempt_idx + 1
+            careless_token_ids = candidate_ids
+            careless_deviated = candidate_deviated
+            if candidate_deviated:
+                resample_count = attempt_idx
+                break
+            resample_count = attempt_idx + 1
 
-    assert careless_token_ids is not None, "failed to generate a careless prefix"
-    skip_kd = not careless_deviated
+    has_sampled_tail = active_careless_rollout_len > 0
+    skip_kd = has_sampled_tail and not careless_deviated
 
     teacher_trace_prefix_text = build_teacher_trace_prefix_text(
         tokenizer=tokenizer,
         gold_prefix_ids=gold_prefix_ids,
         careless_token_ids=careless_token_ids,
         careless_marker_text=careless_marker_text,
-        recovery_marker_text=recovery_marker_text,
+        has_sampled_tail=has_sampled_tail,
     )
 
     return {
@@ -220,13 +251,15 @@ def build_online_careless_prefix(
             problem=problem,
             solution=solution,
             careless_marker_text=careless_marker_text,
-            recovery_marker_text=recovery_marker_text,
+            has_sampled_tail=has_sampled_tail,
         ),
         "teacher_trace_prefix_text": teacher_trace_prefix_text,
         "gold_prefix_ids": gold_prefix_ids,
         "careless_token_ids": careless_token_ids,
         "gold_target_ids": gold_target_ids,
         "gold_prefix_length": gold_prefix_length,
+        "active_careless_rollout_len": active_careless_rollout_len,
+        "mixture_mode": mixture_mode,
         "careless_deviated": careless_deviated,
         "careless_resample_count": resample_count,
         "skip_kd": skip_kd,
