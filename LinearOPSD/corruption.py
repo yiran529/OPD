@@ -87,31 +87,12 @@ def build_teacher_trace_prefix_text(
 def build_teacher_user_message(
     problem,
     solution,
-    careless_marker_text,
-    has_sampled_tail,
+    current_trace,
 ):
-    if has_sampled_tail:
-        continuation_instruction = (
-            "\n\nUse the reference solution only as private context for continuing the partial solution below. "
-            f'The marker "{careless_marker_text}" indicates that the short tail after it may contain a local '
-            "mathematical or wording inconsistency. Continue from exactly where the partial solution stops, "
-            "in the style of a normal math solution. If the recent tail is inconsistent, continue in a way "
-            "that restores mathematical coherence. Continue directly with the next math step.\n\n"
-            "Here is the partial solution to continue:\n"
-        )
-    else:
-        continuation_instruction = (
-            "\n\nUse the reference solution only as private context for continuing the partial solution below. "
-            "Continue from exactly where the partial solution stops, in the style of a normal math solution. "
-            "Continue directly with the next math step.\n\n"
-            "Here is the partial solution to continue:\n"
-        )
-
     return (
-        f"Problem: {problem}\n\n"
-        f"Here is a reference solution to this problem:\n"
-        f"=== Reference Solution Begin ===\n{solution}\n=== Reference Solution End ===\n"
-        f"{continuation_instruction}"
+        f"Problem:\n{problem}\n\n"
+        f"Known correct work:\n{solution}\n\n"
+        f"Current work:\n{current_trace}"
     )
 
 
@@ -237,7 +218,7 @@ def build_online_careless_prefix(
     has_sampled_tail = active_careless_rollout_len > 0
     skip_kd = has_sampled_tail and not careless_deviated
 
-    teacher_trace_prefix_text = build_teacher_trace_prefix_text(
+    current_trace = build_teacher_trace_prefix_text(
         tokenizer=tokenizer,
         gold_prefix_ids=gold_prefix_ids,
         careless_token_ids=careless_token_ids,
@@ -250,10 +231,10 @@ def build_online_careless_prefix(
         "teacher_user_message": build_teacher_user_message(
             problem=problem,
             solution=solution,
-            careless_marker_text=careless_marker_text,
-            has_sampled_tail=has_sampled_tail,
+            current_trace=current_trace,
         ),
-        "teacher_trace_prefix_text": teacher_trace_prefix_text,
+        "teacher_trace_prefix_text": "",
+        "current_trace_text": current_trace,
         "gold_prefix_ids": gold_prefix_ids,
         "careless_token_ids": careless_token_ids,
         "gold_target_ids": gold_target_ids,

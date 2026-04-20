@@ -52,16 +52,16 @@ accelerate launch \
     --loss_mode jsd \
     --gold_prefix_ratio_min 0.3 \
     --gold_prefix_ratio_max 0.7 \
-    --linear_opsd_clean_ratio 0.25 \
-    --linear_opsd_mild_ratio 0.50 \
-    --linear_opsd_mild_careless_rollout_len 4 \
-    --careless_rollout_len 8 \
+    --linear_opsd_clean_ratio 0.5 \
+    --linear_opsd_mild_ratio 0.25 \
+    --linear_opsd_mild_careless_rollout_len 8 \
+    --careless_rollout_len 24 \
     --careless_temperature 1.3 \
     --careless_top_p 0.95 \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
-    --recovery_rollout_len 16 \
-    --careless_marker_text "[recent sampled tail begins here]" \
+    --recovery_rollout_len 128 \
+    --careless_marker_text "[sampled tail]" \
     --gradient_checkpointing \
     --use_peft \
     --lora_r 64 \

@@ -567,3 +567,82 @@
   - mild: short sampled tail from `linear_opsd_mild_careless_rollout_len`;
   - hard: sampled tail from `careless_rollout_len`.
   This is intended to prevent every training example from looking like an explicit correction scenario.
+
+## 2026-04-20-20:47 : LinearOPSD GSM8K outputs after protocol cleanup
+- After retraining Qwen3.5-2B LinearOPSD with clipping disabled and clean/mild/hard mixture, GSM8K no longer collapses to near-zero accuracy, but remains clearly below the base model in both thinking and non-thinking eval.
+- The observed failure modes differ by eval style:
+  - thinking eval: many base-correct/trained-wrong examples contain the correct arithmetic result somewhere, but the model over-generates meta reasoning about request constraints, format interpretation, `wait/check` steps, and often ends with placeholder-like `#### <number>` / `<calculated_value>` instead of substituting the computed answer;
+  - non-thinking eval: more examples miss the `####` marker, fall back to last-number extraction, choose an intermediate quantity as the final answer, or occasionally enter long repeated-digit loops.
+- Training generations show teacher-prompt style leaking into student behavior. Student completions can mention "reference solution", "logical gap", or correction-style analysis even when the student eval prompt has no reference solution.
+- The train/eval tasks differ in their visible context. In LinearOPSD training, student inputs are `problem + gold prefix + optional sampled tail`; teacher inputs are `problem + full reference solution + continuation instruction + marked partial solution`. In GSM8K eval, the model receives only the clean problem prompt and must produce a complete solution plus final `####` answer.
+- The 2B run corresponding to `generations_step_195.json` used mild tail length 16, hard tail length 24, recovery length 128, and marker `[sampled tail]`. The saved generation sample contains clean/mild/hard examples, with most sampled examples using a non-empty sampled tail.
+
+## 2026-04-20-21:07 : Detailed LinearOPSD GSM8K output observations
+- Compared files:
+  - base thinking: `LinearOPSD/outputs/eval_results_gsm8k_Qwen3.5-2B_chat_thinking_temp1.0_valn1.json`
+  - trained thinking: `LinearOPSD/outputs/eval_results_gsm8k_Qwen3.5-2B_qwen35_2b_linear_opsd_checkpoint-200_chat_thinking_temp1.0_valn1.json`
+  - base non-thinking: `LinearOPSD/outputs/eval_results_gsm8k_Qwen3.5-2B_chat_nonthinking_temp1.0_valn1.json`
+  - trained non-thinking: `LinearOPSD/outputs/eval_results_gsm8k_Qwen3.5-2B_qwen35_2b_linear_opsd_checkpoint-200_chat_nonthinking_temp1.0_valn1.json`
+- Overall GSM8K metrics in these files:
+  - base thinking: accuracy 51.48%, format rate 83.32%, extraction rate 99.77%;
+  - trained thinking: accuracy 33.21%, format rate 96.74%, extraction rate 99.92%;
+  - base non-thinking: accuracy 74.30%, format rate 91.81%, extraction rate 100.00%;
+  - trained non-thinking: accuracy 50.49%, format rate 60.20%, extraction rate 99.92%.
+- Thinking-mode pairwise comparison:
+  - 343 examples are base-correct/trained-wrong;
+  - 102 examples are base-wrong/trained-correct;
+  - among the 343 regressions, 98.83% still use the `####` marker, but 83.67% have a placeholder-like extracted answer containing `<...>`;
+  - among the 343 regressions, 99.42% contain `wait`, 98.25% contain `check`, 98.25% contain `Analyze the Request`, 99.42% contain request/format meta text, and 48.98% contain correction/reference-style text;
+  - among the 343 regressions, the ground-truth answer appears somewhere in 87.46% of full generations, and a correct `#### <ground_truth>` line appears somewhere in 49.85% of full generations;
+  - median generation length for trained thinking regressions is 1191 words; mean length is 1181.0 words.
+- Non-thinking pairwise comparison:
+  - 396 examples are base-correct/trained-wrong;
+  - 82 examples are base-wrong/trained-correct;
+  - among the 396 regressions, 44.19% use the `####` marker and 50.00% use `last_number` extraction;
+  - among the 396 regressions, 31.82% contain `wait`, 16.41% contain `check`, 20.71% contain format-related text, 28.79% contain correction/reference-style text, and 9.85% contain request/format meta text;
+  - among the 396 regressions, the ground-truth answer appears somewhere in 33.84% of full generations, and no correct `#### <ground_truth>` line was observed by the simple scan;
+  - 2.53% of the 396 non-thinking regressions contain a long repeated-digit span;
+  - median generation length for trained non-thinking regressions is 233.5 words; mean length is 482.9 words.
+- Typical thinking-mode visible pattern:
+  - the model often spends many tokens on prompt analysis, output-format interpretation, and repeated checks;
+  - some outputs compute the correct intermediate or final number in the body, then continue generating and end with `#### <number>`, `#### <calculated_value>`, or another placeholder-like extracted answer.
+- Typical non-thinking visible pattern:
+  - some outputs stop without the required `####` answer line, so grading falls back to the last number in the text;
+  - some outputs select an intermediate quantity as the final answer;
+  - some outputs enter repeated-number continuations such as long runs of the same digit sequence.
+- `generations_step_195.json` training-generation observations:
+  - 20 saved samples: 10 mild, 6 hard, 4 clean;
+  - active sampled-tail lengths: 16 for mild, 24 for hard, 0 for clean;
+  - `skip_kd` is false for 19 samples and true for 1 sample;
+  - `careless_deviated` is true for 15 samples and false for 5 samples;
+  - median completion length is 58 words; median teacher prompt length is 649.5 words;
+  - 3 of 20 saved completions contain visible teacher/reference-style wording such as "reference solution", "logical gap", or correction-like analysis.
+
+## 2026-04-20-21:14 : LinearOPSD GSM8K output length observations
+- Overall output lengths in the GSM8K eval files:
+  - base thinking: median 1100 words, mean 1003.6 words, p90 1268 words, max 1504 words;
+  - trained thinking: median 1184 words, mean 1160.3 words, p90 1300 words, max 1732 words;
+  - base non-thinking: median 195 words, mean 295.1 words, p90 679 words, max 1394 words;
+  - trained non-thinking: median 199 words, mean 398.4 words, p90 1154 words, max 1961 words.
+- Base thinking length split:
+  - correct examples: median 883 words, mean 850.8 words, p90 1177 words;
+  - wrong examples: median 1174 words, mean 1165.9 words, p90 1303 words.
+- Trained thinking length split:
+  - correct examples: median 1156 words, mean 1109.7 words, p90 1265 words;
+  - wrong examples: median 1199 words, mean 1185.4 words, p90 1308 words.
+- Base non-thinking length split:
+  - correct examples: median 179 words, mean 227.2 words, p90 353 words;
+  - wrong examples: median 283 words, mean 491.3 words, p90 1201 words.
+- Trained non-thinking length split:
+  - correct examples: median 166 words, mean 248.6 words, p90 541 words;
+  - wrong examples: median 302 words, mean 551.2 words, p90 1232 words.
+- Same-problem length comparison for thinking eval:
+  - base-correct/trained-wrong examples: base median 992 words vs trained median 1191 words; median trained-minus-base difference is +168 words and mean difference is +265.4 words;
+  - both-correct examples: base median 749.5 words vs trained median 1144 words; median trained-minus-base difference is +335 words and mean difference is +316.0 words;
+  - base-wrong/trained-correct examples: base median 1150.5 words vs trained median 1167.5 words; median difference is +19.5 words;
+  - both-wrong examples: base median 1177 words vs trained median 1203.5 words; median difference is +22 words.
+- Same-problem length comparison for non-thinking eval:
+  - base-correct/trained-wrong examples: base median 197.5 words vs trained median 233.5 words; median trained-minus-base difference is +25 words and mean difference is +217.5 words;
+  - both-correct examples: base median 166.5 words vs trained median 160.5 words; median difference is -2.5 words;
+  - base-wrong/trained-correct examples: base median 242 words vs trained median 212 words; median difference is -6.5 words;
+  - both-wrong examples: base median 299 words vs trained median 538 words; median difference is +22 words and mean difference is +133.3 words.
