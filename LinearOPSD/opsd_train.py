@@ -224,6 +224,33 @@ class CustomScriptArguments(ScriptArguments):
             "extremely high-loss stylistic tokens from dominating the training signal. Set to 0 for no clipping."
         },
     )
+    loss_detail_log_steps: int = field(
+        default=0,
+        metadata={
+            "help": "If > 0, record detailed high-loss token diagnostics every N trainer steps. "
+            "Only supported for loss_mode=jsd."
+        },
+    )
+    loss_detail_top_events: int = field(
+        default=50,
+        metadata={"help": "Number of highest-loss token positions to keep per loss-detail logging window."},
+    )
+    loss_detail_top_vocab: int = field(
+        default=5,
+        metadata={"help": "Number of student/teacher/JSD top vocab entries stored for each high-loss event."},
+    )
+    loss_detail_context_tokens: int = field(
+        default=64,
+        metadata={"help": "Number of valid rollout tokens decoded before/after each high-loss event."},
+    )
+    loss_detail_position_buckets: int = field(
+        default=32,
+        metadata={"help": "Number of rollout-position buckets used for detailed loss diagnostics."},
+    )
+    loss_detail_write_jsonl: bool = field(
+        default=True,
+        metadata={"help": "Write high-loss token events to output_dir/loss_detail/*.jsonl when diagnostics run."},
+    )
 
     use_ema_teacher: bool = field(
         default=False,
@@ -274,10 +301,17 @@ if __name__ == "__main__":
     assert script_args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
     assert script_args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
     assert script_args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
+    assert script_args.loss_detail_log_steps >= 0, "loss_detail_log_steps must be non-negative"
+    assert script_args.loss_detail_top_events > 0, "loss_detail_top_events must be positive"
+    assert script_args.loss_detail_top_vocab > 0, "loss_detail_top_vocab must be positive"
+    assert script_args.loss_detail_context_tokens >= 0, "loss_detail_context_tokens must be non-negative"
+    assert script_args.loss_detail_position_buckets > 0, "loss_detail_position_buckets must be positive"
     if script_args.use_tinker_loss:
         assert script_args.loss_mode == "jsd", (
             "use_tinker_loss is a legacy alternative loss path and cannot be combined with loss_mode!=jsd"
         )
+    if script_args.loss_detail_log_steps > 0:
+        assert not script_args.use_tinker_loss, "loss detail logging currently supports only JSD loss"
     if script_args.conditioning_mode == "linear_opsd":
         assert not script_args.reason_first, "reason_first is incompatible with conditioning_mode=linear_opsd"
         training_args.max_completion_length = script_args.recovery_rollout_len
@@ -385,6 +419,12 @@ if __name__ == "__main__":
                 "use_tinker_loss": script_args.use_tinker_loss,
                 "fixed_teacher": script_args.fixed_teacher,
                 "top_k_loss": script_args.top_k_loss if script_args.top_k_loss > 0 else None,
+                "loss_detail_log_steps": script_args.loss_detail_log_steps,
+                "loss_detail_top_events": script_args.loss_detail_top_events,
+                "loss_detail_top_vocab": script_args.loss_detail_top_vocab,
+                "loss_detail_context_tokens": script_args.loss_detail_context_tokens,
+                "loss_detail_position_buckets": script_args.loss_detail_position_buckets,
+                "loss_detail_write_jsonl": script_args.loss_detail_write_jsonl,
                 "use_ema_teacher": script_args.use_ema_teacher,
                 "ema_decay": script_args.ema_decay if script_args.use_ema_teacher else None,
             },
@@ -497,6 +537,12 @@ if __name__ == "__main__":
         jsd_token_clip=script_args.jsd_token_clip if script_args.jsd_token_clip > 0 else None,
         use_ema_teacher=script_args.use_ema_teacher,
         ema_decay=script_args.ema_decay,
+        loss_detail_log_steps=script_args.loss_detail_log_steps,
+        loss_detail_top_events=script_args.loss_detail_top_events,
+        loss_detail_top_vocab=script_args.loss_detail_top_vocab,
+        loss_detail_context_tokens=script_args.loss_detail_context_tokens,
+        loss_detail_position_buckets=script_args.loss_detail_position_buckets,
+        loss_detail_write_jsonl=script_args.loss_detail_write_jsonl,
     )
 
     if training_args.eval_strategy != "no":

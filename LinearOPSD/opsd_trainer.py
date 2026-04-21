@@ -63,6 +63,7 @@ from trl.trainer.utils import (
 from trl.experimental.gold.gold_config import GOLDConfig
 from corruption import build_online_careless_prefix, pad_token_sequences
 from data_collator import SelfDistillationDataCollator
+from loss_detail_logging import LossDetailLogger
 
 
 if is_peft_available():
@@ -263,6 +264,12 @@ class OPSDTrainer(SFTTrainer):
         jsd_token_clip: float | None = None,
         use_ema_teacher: bool = False,
         ema_decay: float = 0.999,
+        loss_detail_log_steps: int = 0,
+        loss_detail_top_events: int = 50,
+        loss_detail_top_vocab: int = 5,
+        loss_detail_context_tokens: int = 64,
+        loss_detail_position_buckets: int = 32,
+        loss_detail_write_jsonl: bool = True,
     ):
         self.model_name_or_path = model if isinstance(model, str) else model.config._name_or_path
         self.model_revision = getattr(args, "student_model_revision", None)
@@ -331,11 +338,25 @@ class OPSDTrainer(SFTTrainer):
         self.use_ema_teacher = use_ema_teacher
         self.ema_decay = ema_decay
         self._ema_params = None  # lazily initialized on first optimizer step
+        self.loss_detail_logger = LossDetailLogger(
+            tokenizer=self.processing_class,
+            output_dir=self.args.output_dir,
+            accelerator=self.accelerator,
+            log_steps=loss_detail_log_steps,
+            top_events=loss_detail_top_events,
+            top_vocab=loss_detail_top_vocab,
+            context_tokens=loss_detail_context_tokens,
+            position_buckets=loss_detail_position_buckets,
+            write_jsonl=loss_detail_write_jsonl,
+            temperature=self.temperature,
+        )
 
         if self.conditioning_mode == "linear_opsd" and self.reason_first:
             raise ValueError("reason_first=True is incompatible with conditioning_mode=linear_opsd")
         if self.loss_mode not in {"jsd", "tinker"}:
             raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
+        if self.loss_detail_logger.enabled and self.loss_mode != "jsd":
+            raise ValueError("loss detail logging currently supports only loss_mode=jsd")
         if self.rollout_decoding not in {"sample", "greedy"}:
             raise ValueError(f"Unsupported rollout_decoding={self.rollout_decoding}")
         if self.conditioning_mode == "linear_opsd":
@@ -563,6 +584,7 @@ class OPSDTrainer(SFTTrainer):
         logits_are_probs=False,
         top_k=None,
         token_clip=None,
+        return_unreduced=False,
     ):
         """
         Compute the generalized Jensen-Shannon Divergence loss for knowledge distillation using F.kl_div. See Eq. (1)
@@ -593,6 +615,7 @@ class OPSDTrainer(SFTTrainer):
             loss: Scalar tensor with the generalized JSD loss
         """
 
+        top_k_indices = None
         if logits_are_probs:
             student_log_probs = torch.log(student_logits.clamp_min(1e-8))
             teacher_log_probs = torch.log(teacher_logits.clamp_min(1e-8))
@@ -637,22 +660,36 @@ class OPSDTrainer(SFTTrainer):
         if token_clip is not None:
             jsd = jsd.clamp(max=token_clip)
 
+        unreduced_jsd = jsd
+
         # Masking
         if labels is not None:
             mask = labels != -100
             if not mask.any():
-                return student_log_probs.new_zeros(())
-            jsd = jsd[mask]
+                loss = student_log_probs.new_zeros(())
+                if return_unreduced:
+                    top_k_indices = top_k_indices.detach() if top_k_indices is not None else None
+                    return loss, unreduced_jsd.detach(), top_k_indices
+                return loss
+            reduced_jsd = jsd[mask]
+        else:
+            mask = None
+            reduced_jsd = jsd
 
         # Apply reduction
         if reduction == "batchmean":
-            return jsd.sum() / mask.sum() if labels is not None else jsd.sum() / jsd.size(0)
+            loss = reduced_jsd.sum() / mask.sum() if labels is not None else reduced_jsd.sum() / reduced_jsd.size(0)
         elif reduction == "sum":
-            return jsd.sum()
+            loss = reduced_jsd.sum()
         elif reduction == "mean":
-            return jsd.mean()
+            loss = reduced_jsd.mean()
         else:
-            return jsd
+            loss = reduced_jsd
+
+        if return_unreduced:
+            top_k_indices = top_k_indices.detach() if top_k_indices is not None else None
+            return loss, unreduced_jsd.detach(), top_k_indices
+        return loss
 
     def _update_ema(self):
         """Update EMA parameters after an optimizer step.
@@ -999,15 +1036,38 @@ class OPSDTrainer(SFTTrainer):
             )
         elif self.loss_mode == "jsd":
             # Temperature is applied inside generalized_jsd_loss
-            loss = self.generalized_jsd_loss(
-                student_logits=student_logits_for_loss,
-                teacher_logits=teacher_logits_for_loss,
-                labels=shifted_labels,
-                beta=self.beta,
-                temperature=self.temperature,  # Let the function handle temperature
-                top_k=self.top_k_loss,
-                token_clip=self.jsd_token_clip,
-            )
+            if self.loss_detail_logger.should_record(self.state.global_step):
+                loss, jsd_for_stats, top_k_indices = self.generalized_jsd_loss(
+                    student_logits=student_logits_for_loss,
+                    teacher_logits=teacher_logits_for_loss,
+                    labels=shifted_labels,
+                    beta=self.beta,
+                    temperature=self.temperature,  # Let the function handle temperature
+                    top_k=self.top_k_loss,
+                    token_clip=self.jsd_token_clip,
+                    return_unreduced=True,
+                )
+                self.loss_detail_logger.record(
+                    global_step=self.state.global_step,
+                    jsd_by_vocab=jsd_for_stats,
+                    top_k_indices=top_k_indices,
+                    labels=shifted_labels,
+                    sampled_token_ids=sampled_token_ids,
+                    student_logits=student_logits_for_loss.detach(),
+                    teacher_logits=teacher_logits_for_loss.detach(),
+                    inputs=inputs,
+                )
+                del jsd_for_stats, top_k_indices
+            else:
+                loss = self.generalized_jsd_loss(
+                    student_logits=student_logits_for_loss,
+                    teacher_logits=teacher_logits_for_loss,
+                    labels=shifted_labels,
+                    beta=self.beta,
+                    temperature=self.temperature,  # Let the function handle temperature
+                    top_k=self.top_k_loss,
+                    token_clip=self.jsd_token_clip,
+                )
             del student_logits_for_loss, teacher_logits_for_loss
         else:
             raise ValueError(f"Unsupported loss_mode={self.loss_mode}")
@@ -1844,6 +1904,15 @@ class OPSDTrainer(SFTTrainer):
             metrics = {f"eval_{key}": val for key, val in metrics.items()}
 
         logs = {**logs, **metrics}
+        if mode == "train":
+            report_to_wandb = bool(self.args.report_to and "wandb" in self.args.report_to)
+            self.loss_detail_logger.flush(
+                logs=logs,
+                global_step=self.state.global_step,
+                main_print=self._main_print,
+                wandb_module=globals().get("wandb"),
+                report_to_wandb=report_to_wandb,
+            )
         super().log(logs, start_time)
         self._metrics[mode].clear()
 

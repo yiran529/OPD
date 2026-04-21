@@ -191,6 +191,14 @@ def build_online_careless_prefix(
         active_careless_rollout_len = careless_rollout_len
 
     gold_target_ids = list(solution_ids[gold_prefix_length : gold_prefix_length + active_careless_rollout_len])
+    gold_recovery_target_ids = list(
+        solution_ids[
+            gold_prefix_length
+            + active_careless_rollout_len : gold_prefix_length
+            + active_careless_rollout_len
+            + 256
+        ]
+    )
     if active_careless_rollout_len > 0:
         assert gold_target_ids, "gold prefix consumed the full solution; expected at least one target token"
 
@@ -244,6 +252,7 @@ def build_online_careless_prefix(
         "gold_prefix_ids": gold_prefix_ids,
         "careless_token_ids": careless_token_ids,
         "gold_target_ids": gold_target_ids,
+        "gold_recovery_target_ids": gold_recovery_target_ids,
         "gold_prefix_length": gold_prefix_length,
         "active_careless_rollout_len": active_careless_rollout_len,
         "mixture_mode": mixture_mode,

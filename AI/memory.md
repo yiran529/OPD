@@ -651,3 +651,13 @@
 - `LinearOPSD/corruption.py` changed the `linear_opsd` teacher prompt so `current_trace` is no longer embedded inside the user message as `Current work`.
 - The teacher user message now contains `Problem`, `Known correct work`, and a continuation instruction that asks the teacher to use the known work only as private context, continue naturally from the existing assistant work, and preserve mathematical correctness.
 - The actual `current_trace` is returned as `teacher_trace_prefix_text`, so trainer and inspection prompts are shaped as user instruction followed by an assistant prefix containing `gold prefix + optional sampled-tail marker + optional sampled tail`.
+
+## 2026-04-21 : LinearOPSD high-loss token diagnostics
+- Added default-off detailed JSD diagnostics for `LinearOPSD/opsd_trainer.py` through a separate `LinearOPSD/loss_detail_logging.py` module.
+- The diagnostics read detached unreduced JSD/logits only after the normal JSD loss is computed; they do not change rollout construction, the scalar training loss, or backward behavior.
+- When enabled, the logger records position-loss quantiles/histograms, rollout-position buckets, top high-loss token events, student/teacher top vocab choices, JSD top contributors, console summaries, W&B tables, and local JSONL files under `output_dir/loss_detail/`.
+
+## 2026-04-21 : LinearOPSD loss-detail context fields
+- Loss-detail logging now records from `global_step=0` when `loss_detail_log_steps > 0`, so early prompt/recovery alignment issues are visible.
+- High-loss events now include `student_prompt_tail`, `teacher_prompt_tail`, `gold_prefix_tail`, `careless_tail_text`, `gold_next_text`, and `teacher_actual_token_prob`.
+- `LinearOPSD/corruption.py` stores `gold_recovery_target_ids` in linear-OPSD metadata so `gold_next_text` reflects the gold continuation after the current recovery start, including clean samples where there is no careless tail.
