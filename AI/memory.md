@@ -646,3 +646,8 @@
   - both-correct examples: base median 166.5 words vs trained median 160.5 words; median difference is -2.5 words;
   - base-wrong/trained-correct examples: base median 242 words vs trained median 212 words; median difference is -6.5 words;
   - both-wrong examples: base median 299 words vs trained median 538 words; median difference is +22 words and mean difference is +133.3 words.
+
+## 2026-04-21 : LinearOPSD teacher prompt uses assistant-prefix continuation again
+- `LinearOPSD/corruption.py` changed the `linear_opsd` teacher prompt so `current_trace` is no longer embedded inside the user message as `Current work`.
+- The teacher user message now contains `Problem`, `Known correct work`, and a continuation instruction that asks the teacher to use the known work only as private context, continue naturally from the existing assistant work, and preserve mathematical correctness.
+- The actual `current_trace` is returned as `teacher_trace_prefix_text`, so trainer and inspection prompts are shaped as user instruction followed by an assistant prefix containing `gold prefix + optional sampled-tail marker + optional sampled tail`.

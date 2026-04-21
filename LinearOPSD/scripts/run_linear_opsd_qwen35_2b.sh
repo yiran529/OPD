@@ -31,12 +31,12 @@ accelerate launch \
     --dataset_name open-r1/OpenThoughts-114k-math \
     --dataset_split train \
     --output_dir outputs/linear_opsd \
-    --run_config qwen35_2b_linear_opsd \
+    --run_config qwen35_2b_linear_opsd_longrollout \
     --learning_rate 5e-6 \
     --max_grad_norm 0.1 \
     --per_device_train_batch_size 4 \
     --gradient_accumulation_steps 1 \
-    --max_steps 200 \
+    --max_steps 100 \
     --max_length 20000 \
     --save_strategy steps \
     --save_steps 50 \
@@ -54,14 +54,14 @@ accelerate launch \
     --gold_prefix_ratio_max 0.7 \
     --linear_opsd_clean_ratio 0.5 \
     --linear_opsd_mild_ratio 0.25 \
-    --linear_opsd_mild_careless_rollout_len 8 \
-    --careless_rollout_len 24 \
+    --linear_opsd_mild_careless_rollout_len 32 \
+    --careless_rollout_len 64 \
     --careless_temperature 1.3 \
     --careless_top_p 0.95 \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
-    --recovery_rollout_len 128 \
-    --careless_marker_text "[sampled tail]" \
+    --recovery_rollout_len 1024 \
+    --careless_marker_text "[sampled_tail]" \
     --gradient_checkpointing \
     --use_peft \
     --lora_r 64 \

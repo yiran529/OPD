@@ -87,12 +87,18 @@ def build_teacher_trace_prefix_text(
 def build_teacher_user_message(
     problem,
     solution,
-    current_trace,
+    careless_marker_text,
 ):
     return (
         f"Problem:\n{problem}\n\n"
         f"Known correct work:\n{solution}\n\n"
-        f"Current work:\n{current_trace}"
+        "Use the known correct work only as private context for keeping the continuation "
+        "mathematically correct. After this instruction, you will see the existing assistant "
+        "work. Continue it from exactly where it stops. Write the next steps as a natural math "
+        "solution. Do not discuss the prompt, the known work, or the current work. "
+        f"If the marker \"{careless_marker_text}\" appears, the short span after it may contain "
+        "a local inconsistency; continue in a way that restores mathematical coherence while "
+        "keeping the solution natural."
     )
 
 
@@ -231,9 +237,9 @@ def build_online_careless_prefix(
         "teacher_user_message": build_teacher_user_message(
             problem=problem,
             solution=solution,
-            current_trace=current_trace,
+            careless_marker_text=careless_marker_text,
         ),
-        "teacher_trace_prefix_text": "",
+        "teacher_trace_prefix_text": current_trace,
         "current_trace_text": current_trace,
         "gold_prefix_ids": gold_prefix_ids,
         "careless_token_ids": careless_token_ids,
