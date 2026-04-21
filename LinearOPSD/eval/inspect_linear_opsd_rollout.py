@@ -288,13 +288,24 @@ def _prepare_examples(dataset, tokenizer, hf_model, device, args):
             add_generation_prompt=True,
             enable_thinking=args.linear_opsd_teacher_enable_thinking,
         )
+        teacher_prompt_prefix_ids = tokenizer(
+            teacher_prompt_prefix_text,
+            add_special_tokens=False,
+        )["input_ids"]
+        teacher_prompt_prefix_ids = [int(token_id) for token_id in teacher_prompt_prefix_ids]
+        teacher_trace_ids = [int(token_id) for token_id in rollout["teacher_trace_prefix_ids"]]
+        if teacher_trace_ids:
+            assert teacher_trace_ids == rollout["student_prompt_ids"][-len(teacher_trace_ids) :], (
+                "linear_opsd teacher trace ids must exactly match the student prompt tail"
+            )
+        teacher_seen_prefix_ids = teacher_prompt_prefix_ids + teacher_trace_ids
 
         example = {
             "dataset_index": index,
             "problem": problem,
             "problem_prompt_text": _decode_ids(tokenizer, problem_prompt_ids),
             "student_seen_prefix_text": _decode_ids(tokenizer, rollout["student_prompt_ids"]),
-            "teacher_seen_prefix_text": teacher_prompt_prefix_text + rollout["teacher_trace_prefix_text"],
+            "teacher_seen_prefix_text": _decode_ids(tokenizer, teacher_seen_prefix_ids),
             "gold_prefix_length": int(rollout["gold_prefix_length"]),
             "careless_prefix_length": len(rollout["careless_token_ids"]),
             "mixture_mode": rollout["mixture_mode"],
@@ -456,8 +467,18 @@ def main():
     parser.add_argument("--careless_resample_trials", type=int, default=3)
     parser.add_argument("--rollout_decoding", choices=["greedy"], default="greedy")
     parser.add_argument("--recovery_rollout_len", type=int, default=8)
-    parser.add_argument("--careless_marker_text", type=str, default="[recent sampled tail begins here]")
-    parser.add_argument("--recovery_marker_text", type=str, default="<recovery>")
+    parser.add_argument(
+        "--careless_marker_text",
+        type=str,
+        default="",
+        help="Deprecated compatibility field; inline sampled-tail markers are not inserted.",
+    )
+    parser.add_argument(
+        "--recovery_marker_text",
+        type=str,
+        default="",
+        help="Deprecated compatibility field; recovery markers are not inserted.",
+    )
     parser.add_argument(
         "--output_jsonl",
         type=str,
@@ -484,8 +505,6 @@ def main():
     assert args.careless_top_k >= 0, "careless_top_k must be non-negative"
     assert args.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
     assert args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
-    assert args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
-    assert args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
 
     random.seed(args.seed)
     torch.manual_seed(args.seed)

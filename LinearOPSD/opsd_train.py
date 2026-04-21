@@ -158,12 +158,12 @@ class CustomScriptArguments(ScriptArguments):
         metadata={"help": "Recovery rollout length. This also defines the KD supervision length."},
     )
     careless_marker_text: str = field(
-        default="[recent sampled tail begins here]",
-        metadata={"help": "Teacher-visible marker inserted before the sampled tail."},
+        default="",
+        metadata={"help": "Deprecated compatibility field; inline sampled-tail markers are not inserted."},
     )
     recovery_marker_text: str = field(
-        default="<recovery>",
-        metadata={"help": "Inline marker inserted before the recovery rollout in the teacher-visible trace."},
+        default="",
+        metadata={"help": "Deprecated compatibility field; recovery markers are not inserted."},
     )
     dataset_name: str = field(
         default="siyanzhao/Openthoughts_math_30k_opsd",
@@ -299,8 +299,6 @@ if __name__ == "__main__":
     assert script_args.careless_top_k >= 0, "careless_top_k must be non-negative"
     assert script_args.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
     assert script_args.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
-    assert script_args.careless_marker_text.strip(), "careless_marker_text must be non-empty"
-    assert script_args.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
     assert script_args.loss_detail_log_steps >= 0, "loss_detail_log_steps must be non-negative"
     assert script_args.loss_detail_top_events > 0, "loss_detail_top_events must be positive"
     assert script_args.loss_detail_top_vocab > 0, "loss_detail_top_vocab must be positive"

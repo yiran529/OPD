@@ -258,8 +258,8 @@ class OPSDTrainer(SFTTrainer):
         careless_top_k: int = 50,
         careless_resample_trials: int = 3,
         recovery_rollout_len: int = 8,
-        careless_marker_text: str = "[recent sampled tail begins here]",
-        recovery_marker_text: str = "<recovery>",
+        careless_marker_text: str = "",
+        recovery_marker_text: str = "",
         top_k_loss: int | None = None,
         jsd_token_clip: float | None = None,
         use_ema_teacher: bool = False,
@@ -377,8 +377,6 @@ class OPSDTrainer(SFTTrainer):
             assert self.careless_top_k >= 0, "careless_top_k must be non-negative"
             assert self.careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
             assert self.recovery_rollout_len > 0, "recovery_rollout_len must be positive"
-            assert self.careless_marker_text.strip(), "careless_marker_text must be non-empty"
-            assert self.recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
 
         # Validate fixed_teacher option
         if self.fixed_teacher and peft_config is None:
@@ -889,11 +887,11 @@ class OPSDTrainer(SFTTrainer):
                     add_special_tokens=False,
                 )["input_ids"]
                 teacher_prompt_prefix_ids = [int(token_id) for token_id in teacher_prompt_prefix_ids]
-                teacher_trace_ids = self.processing_class(
-                    rollout["teacher_trace_prefix_text"],
-                    add_special_tokens=False,
-                )["input_ids"]
-                teacher_trace_ids = [int(token_id) for token_id in teacher_trace_ids]
+                teacher_trace_ids = [int(token_id) for token_id in rollout["teacher_trace_prefix_ids"]]
+                if teacher_trace_ids:
+                    assert teacher_trace_ids == rollout["student_prompt_ids"][-len(teacher_trace_ids) :], (
+                        "linear_opsd teacher trace ids must exactly match the student prompt tail"
+                    )
                 teacher_prompt_ids = teacher_prompt_prefix_ids + teacher_trace_ids
 
                 assert len(teacher_prompt_ids) <= self.args.max_length, (

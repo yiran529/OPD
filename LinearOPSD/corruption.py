@@ -41,14 +41,6 @@ def _decode_ids(tokenizer, token_ids):
     return tokenizer.decode(token_ids, skip_special_tokens=False)
 
 
-def _append_with_space(parts, text):
-    if not text:
-        return
-    if parts and parts[-1] and not parts[-1][-1].isspace():
-        parts.append(" ")
-    parts.append(text)
-
-
 def sample_gold_prefix_length(solution_length, gold_prefix_ratio_min, gold_prefix_ratio_max):
     assert solution_length > 0, "solution_length must be positive"
     assert 0.0 <= gold_prefix_ratio_min <= gold_prefix_ratio_max <= 1.0, (
@@ -67,27 +59,17 @@ def sample_gold_prefix_length(solution_length, gold_prefix_ratio_min, gold_prefi
     return random.randint(min_prefix_length, max_prefix_length)
 
 
-def build_teacher_trace_prefix_text(
-    tokenizer,
-    gold_prefix_ids,
-    careless_token_ids,
-    careless_marker_text,
-    has_sampled_tail,
-):
-    parts = []
-    _append_with_space(parts, _decode_ids(tokenizer, gold_prefix_ids))
-    if has_sampled_tail:
-        _append_with_space(parts, careless_marker_text)
-        _append_with_space(parts, _decode_ids(tokenizer, careless_token_ids))
-    if parts and not parts[-1][-1].isspace():
-        parts.append(" ")
-    return "".join(parts)
+def build_teacher_trace_prefix_ids(gold_prefix_ids, careless_token_ids):
+    return list(gold_prefix_ids) + list(careless_token_ids)
+
+
+def build_teacher_trace_prefix_text(tokenizer, teacher_trace_prefix_ids):
+    return _decode_ids(tokenizer, teacher_trace_prefix_ids)
 
 
 def build_teacher_user_message(
     problem,
     solution,
-    careless_marker_text,
 ):
     return (
         f"Problem:\n{problem}\n\n"
@@ -96,9 +78,8 @@ def build_teacher_user_message(
         "mathematically correct. After this instruction, you will see the existing assistant "
         "work. Continue it from exactly where it stops. Write the next steps as a natural math "
         "solution. Do not discuss the prompt, the known work, or the current work. "
-        f"If the marker \"{careless_marker_text}\" appears, the short span after it may contain "
-        "a local inconsistency; continue in a way that restores mathematical coherence while "
-        "keeping the solution natural."
+        "The existing assistant work may contain a short locally inconsistent span; continue "
+        "in a way that restores mathematical coherence while keeping the solution natural."
     )
 
 
@@ -168,8 +149,6 @@ def build_online_careless_prefix(
     assert mild_careless_rollout_len > 0, "mild_careless_rollout_len must be positive"
     assert careless_rollout_len > 0, "careless_rollout_len must be positive"
     assert careless_resample_trials >= 0, "careless_resample_trials must be non-negative"
-    assert careless_marker_text.strip(), "careless_marker_text must be non-empty"
-    assert recovery_marker_text.strip(), "recovery_marker_text must be non-empty"
 
     gold_prefix_length = sample_gold_prefix_length(
         solution_length=solution_length,
@@ -232,21 +211,22 @@ def build_online_careless_prefix(
     has_sampled_tail = active_careless_rollout_len > 0
     skip_kd = has_sampled_tail and not careless_deviated
 
-    current_trace = build_teacher_trace_prefix_text(
-        tokenizer=tokenizer,
+    current_trace_ids = build_teacher_trace_prefix_ids(
         gold_prefix_ids=gold_prefix_ids,
         careless_token_ids=careless_token_ids,
-        careless_marker_text=careless_marker_text,
-        has_sampled_tail=has_sampled_tail,
+    )
+    current_trace = build_teacher_trace_prefix_text(
+        tokenizer=tokenizer,
+        teacher_trace_prefix_ids=current_trace_ids,
     )
 
     return {
-        "student_prompt_ids": list(problem_prompt_ids) + gold_prefix_ids + careless_token_ids,
+        "student_prompt_ids": list(problem_prompt_ids) + current_trace_ids,
         "teacher_user_message": build_teacher_user_message(
             problem=problem,
             solution=solution,
-            careless_marker_text=careless_marker_text,
         ),
+        "teacher_trace_prefix_ids": current_trace_ids,
         "teacher_trace_prefix_text": current_trace,
         "current_trace_text": current_trace,
         "gold_prefix_ids": gold_prefix_ids,

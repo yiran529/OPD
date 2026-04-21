@@ -61,7 +61,6 @@ accelerate launch \
     --careless_top_k 50 \
     --careless_resample_trials 2 \
     --recovery_rollout_len 16 \
-    --careless_marker_text "[recent sampled tail begins here]" \
     --gradient_checkpointing \
     --use_peft \
     --lora_r 64 \
@@ -70,7 +69,7 @@ accelerate launch \
     --temperature 1.1 \
     --top_p 0.95 \
     --top_k 20 \
-    --rollout_decoding greedy \
+    --rollout_decoding sample \
     --jsd_token_clip 0 \
     --wandb_project LinearOPSD \
     --report_to wandb \

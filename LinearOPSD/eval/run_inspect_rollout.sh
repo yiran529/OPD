@@ -26,7 +26,6 @@ NCCL_P2P_DISABLE=1 CUDA_VISIBLE_DEVICES=0,1,2,3 python inspect_linear_opsd_rollo
     --careless_resample_trials 3 \
     --rollout_decoding greedy \
     --recovery_rollout_len 16 \
-    --careless_marker_text "[recent sampled tail begins here]" \
     --output_jsonl "$OUTPUT_DIR/linear_opsd_three_way_rollout_inspect_base.jsonl"
 wait
 
@@ -54,6 +53,5 @@ wait
 #     --careless_resample_trials 3 \
 #     --rollout_decoding greedy \
 #     --recovery_rollout_len 16 \
-#     --careless_marker_text "[recent sampled tail begins here]" \
 #     --output_jsonl "$OUTPUT_DIR/linear_opsd_three_way_rollout_inspect_ckpt.jsonl"
 # wait

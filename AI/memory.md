@@ -661,3 +661,12 @@
 - Loss-detail logging now records from `global_step=0` when `loss_detail_log_steps > 0`, so early prompt/recovery alignment issues are visible.
 - High-loss events now include `student_prompt_tail`, `teacher_prompt_tail`, `gold_prefix_tail`, `careless_tail_text`, `gold_next_text`, and `teacher_actual_token_prob`.
 - `LinearOPSD/corruption.py` stores `gold_recovery_target_ids` in linear-OPSD metadata so `gold_next_text` reflects the gold continuation after the current recovery start, including clean samples where there is no careless tail.
+
+## 2026-04-21 : LinearOPSD exact token-level teacher trace
+- Loss-detail analysis showed high first-token JSD was often caused by teacher trace text being decoded, joined with marker text/spaces, then retokenized, while the student prompt used raw token ids.
+- In `loss_events_step_0/20.jsonl`, high-loss events were concentrated at the recovery boundary: 22/50 and 26/50 top events were at `rollout_pos=0`; W&B position buckets also showed step-20 bucket 0 (`pos 0-31`) had much higher average loss than later buckets.
+- Clean `rollout_pos=0` events often had student tokens matching `gold_next_text` while teacher assigned low probability, indicating teacher/student prompt-tail mismatch rather than bad student continuation.
+- The old inline sampled-tail marker frequently appeared inside math expressions and could collide with LaTeX `\[`; top teacher/JSD tokens sometimes became meta words such as `sample`, `continue`, `restore`, `correct`, `Known`, or `Correction`.
+- `LinearOPSD/corruption.py` now returns `teacher_trace_prefix_ids = gold_prefix_ids + careless_token_ids`; no inline sampled-tail or recovery marker is inserted into the assistant trace.
+- `LinearOPSD/opsd_trainer.py` now appends those trace ids directly after the teacher chat-template prefix and asserts the teacher trace ids exactly match the student prompt tail.
+- `careless_marker_text` and `recovery_marker_text` remain only as deprecated compatibility fields; launch scripts no longer pass sampled-tail marker text.
