@@ -73,13 +73,11 @@ def build_teacher_user_message(
 ):
     return (
         f"Problem:\n{problem}\n\n"
-        f"Reference:\n{solution}\n\n"
-        "Use the reference ONLY as private context for keeping the continuation "
-        "mathematically correct. After this instruction, you will see the existing assistant "
-        "work."
-        "The existing assistant work may contain a short locally inconsistent span; continue "
-        "in a way that restores mathematical coherence while keeping the solution natural."
-        "DO NOT discuss the prompt, the reference, or the current work!"
+        "A mathematically correct solution is shown below.\n"
+        f"=== Solution Begin ===\n{solution}\n=== Solution End ===\n\n"
+        "Continue the assistant answer directly from the exact partial answer that follows. "
+        "Use the solution above only to keep the next steps mathematically correct and natural. "
+        "Write only the continuation."
     )
 
 

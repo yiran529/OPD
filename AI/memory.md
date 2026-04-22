@@ -678,3 +678,7 @@
 - Outputs containing any of `reference`, `prompt/instruction`, or `wait/check/reconsider` have much worse behavior: 302/1319 examples, 38.08% accuracy, 54.30% format rate, 708.6 mean words, and 1235.6 p90 words. Outputs containing all three flags have only 19.79% accuracy and 31.25% format rate.
 - Strong reference leakage phrases such as `Reference provided`, `reference explicitly`, `Reference Analysis`, or `provided in the prompt` appear in 63 examples; these have 19.05% accuracy, 31.75% format rate, and 1039 mean words.
 - The likely causes are long `recovery_rollout_len=512` training loss on late drift tokens, remaining teacher-prompt words such as `Reference`, `prompt`, `inconsistent`, and `restore`, and train/eval final-answer mismatch (`\\boxed{}` in LinearOPSD student prompt versus `#### <number>` in GSM8K eval).
+
+## 2026-04-22 : LinearOPSD teacher prompt wording cleanup
+- `LinearOPSD/corruption.py` changed the linear-OPSD teacher user message to a shorter continuation prompt: it shows a mathematically correct solution block, then asks the teacher to continue the exact following partial answer naturally and mathematically correctly.
+- The prompt no longer uses the high-leakage words `Reference`, `prompt`, `inconsistent`, `restore`, or `current work`; the exact token-level teacher trace and student-tail equality logic remain unchanged.
