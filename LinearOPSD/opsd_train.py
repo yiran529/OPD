@@ -251,6 +251,13 @@ class CustomScriptArguments(ScriptArguments):
         default=True,
         metadata={"help": "Write high-loss token events to output_dir/loss_detail/*.jsonl when diagnostics run."},
     )
+    loss_detail_token_categories: bool = field(
+        default=False,
+        metadata={
+            "help": "When loss detail logging runs, also write coarse token-category loss summaries. "
+            "This does not change the training loss."
+        },
+    )
 
     use_ema_teacher: bool = field(
         default=False,
@@ -423,6 +430,7 @@ if __name__ == "__main__":
                 "loss_detail_context_tokens": script_args.loss_detail_context_tokens,
                 "loss_detail_position_buckets": script_args.loss_detail_position_buckets,
                 "loss_detail_write_jsonl": script_args.loss_detail_write_jsonl,
+                "loss_detail_token_categories": script_args.loss_detail_token_categories,
                 "use_ema_teacher": script_args.use_ema_teacher,
                 "ema_decay": script_args.ema_decay if script_args.use_ema_teacher else None,
             },
@@ -541,6 +549,7 @@ if __name__ == "__main__":
         loss_detail_context_tokens=script_args.loss_detail_context_tokens,
         loss_detail_position_buckets=script_args.loss_detail_position_buckets,
         loss_detail_write_jsonl=script_args.loss_detail_write_jsonl,
+        loss_detail_token_categories=script_args.loss_detail_token_categories,
     )
 
     if training_args.eval_strategy != "no":

@@ -270,6 +270,7 @@ class OPSDTrainer(SFTTrainer):
         loss_detail_context_tokens: int = 64,
         loss_detail_position_buckets: int = 32,
         loss_detail_write_jsonl: bool = True,
+        loss_detail_token_categories: bool = False,
     ):
         self.model_name_or_path = model if isinstance(model, str) else model.config._name_or_path
         self.model_revision = getattr(args, "student_model_revision", None)
@@ -348,6 +349,7 @@ class OPSDTrainer(SFTTrainer):
             context_tokens=loss_detail_context_tokens,
             position_buckets=loss_detail_position_buckets,
             write_jsonl=loss_detail_write_jsonl,
+            token_categories=loss_detail_token_categories,
             temperature=self.temperature,
         )
 

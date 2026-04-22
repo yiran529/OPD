@@ -77,6 +77,7 @@ accelerate launch \
     --loss_detail_context_tokens 64 \
     --loss_detail_position_buckets 32 \
     --loss_detail_write_jsonl true \
+    --loss_detail_token_categories true \
     --wandb_project LinearOPSD \
     --report_to wandb \
     --fixed_teacher

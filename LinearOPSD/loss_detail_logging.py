@@ -6,6 +6,8 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from accelerate.utils import gather_object
 
+from token_loss_categories import CATEGORY_ORDER, TokenCategoryClassifier
+
 
 class LossDetailLogger:
     """Windowed high-loss token diagnostics for JSD distillation."""
@@ -22,6 +24,7 @@ class LossDetailLogger:
         context_tokens=64,
         position_buckets=32,
         write_jsonl=True,
+        token_categories=False,
         temperature=1.0,
     ):
         self.tokenizer = tokenizer
@@ -33,6 +36,7 @@ class LossDetailLogger:
         self.context_tokens = int(context_tokens)
         self.position_buckets = int(position_buckets)
         self.write_jsonl = bool(write_jsonl)
+        self.token_categories = bool(token_categories)
         self.temperature = float(temperature)
 
         assert self.log_steps >= 0, "loss_detail_log_steps must be non-negative"
@@ -47,6 +51,9 @@ class LossDetailLogger:
         self._bucket_sum = torch.zeros(self.position_buckets, dtype=torch.float64)
         self._bucket_count = torch.zeros(self.position_buckets, dtype=torch.float64)
         self._last_seq_len = None
+        self._category_classifier = TokenCategoryClassifier(tokenizer) if self.token_categories else None
+        self._actual_category_losses = {category: [] for category in CATEGORY_ORDER}
+        self._jsd_top_category_contribs = {category: [] for category in CATEGORY_ORDER}
 
     @property
     def enabled(self):
@@ -56,7 +63,12 @@ class LossDetailLogger:
         return self.enabled and global_step % self.log_steps == 0
 
     def has_pending(self):
-        return bool(self._events) or bool(self._position_loss_chunks) or bool(self._bucket_count.sum().item())
+        return (
+            bool(self._events)
+            or bool(self._position_loss_chunks)
+            or bool(self._bucket_count.sum().item())
+            or self._has_category_values()
+        )
 
     def record(
         self,
@@ -83,6 +95,14 @@ class LossDetailLogger:
             self._position_loss_chunks.append(valid_position_loss.detach().cpu())
 
             self._record_position_buckets(position_loss=position_loss, mask=mask)
+            if self.token_categories:
+                self._record_token_categories(
+                    position_loss=position_loss,
+                    mask=mask,
+                    jsd_by_vocab=jsd_by_vocab,
+                    top_k_indices=top_k_indices,
+                    sampled_token_ids=sampled_token_ids,
+                )
             self._record_top_events(
                 global_step=global_step,
                 position_loss=position_loss,
@@ -158,10 +178,23 @@ class LossDetailLogger:
                 avg = float(bucket_sum[bucket_idx].item() / count)
                 logs[f"loss_detail/bucket_{bucket_idx:02d}_avg"] = round(avg, 6)
 
+        category_summary = None
+        if self.token_categories:
+            category_summary = self._gather_category_summary()
+            self._add_category_logs(logs=logs, category_summary=category_summary)
+
         if self.accelerator.is_main_process:
-            self._print_summary(main_print=main_print, global_step=output_step, events=all_events, logs=logs)
+            self._print_summary(
+                main_print=main_print,
+                global_step=output_step,
+                events=all_events,
+                logs=logs,
+                category_summary=category_summary,
+            )
             if self.write_jsonl and all_events:
                 self._write_jsonl(global_step=output_step, events=all_events)
+            if self.write_jsonl and category_summary is not None:
+                self._write_category_summary(global_step=output_step, category_summary=category_summary)
             if report_to_wandb and wandb_module is not None and getattr(wandb_module, "run", None) is not None:
                 self._log_wandb_tables(
                     wandb_module=wandb_module,
@@ -180,6 +213,10 @@ class LossDetailLogger:
         self._bucket_sum.zero_()
         self._bucket_count.zero_()
         self._last_seq_len = None
+        for values in self._actual_category_losses.values():
+            values.clear()
+        for values in self._jsd_top_category_contribs.values():
+            values.clear()
 
     def _record_position_buckets(self, *, position_loss, mask):
         seq_len = position_loss.shape[1]
@@ -201,6 +238,40 @@ class LossDetailLogger:
         bucket_count = torch.bincount(valid_bucket_ids, minlength=self.position_buckets).double().cpu()
         self._bucket_sum += bucket_sum
         self._bucket_count += bucket_count
+
+    def _record_token_categories(
+        self,
+        *,
+        position_loss,
+        mask,
+        jsd_by_vocab,
+        top_k_indices,
+        sampled_token_ids,
+    ):
+        assert self._category_classifier is not None, "token category classifier is not initialized"
+
+        valid_losses = position_loss[mask].detach().float().cpu().tolist()
+        valid_sampled_ids = sampled_token_ids[mask].detach().cpu().tolist()
+        for token_id, loss_value in zip(valid_sampled_ids, valid_losses):
+            category = self._category_classifier.category_for_token_id(token_id)
+            self._actual_category_losses[category].append(float(loss_value))
+
+        # ---- highest per-vocab JSD contributor per rollout position ----
+        contrib_values, contrib_local_indices = jsd_by_vocab.max(dim=-1)
+        if top_k_indices is None:
+            contrib_token_ids = contrib_local_indices
+        else:
+            contrib_token_ids = torch.gather(
+                top_k_indices,
+                dim=-1,
+                index=contrib_local_indices.unsqueeze(-1),
+            ).squeeze(-1)
+
+        valid_contrib_values = contrib_values[mask].detach().float().cpu().tolist()
+        valid_contrib_token_ids = contrib_token_ids[mask].detach().cpu().tolist()
+        for token_id, contrib_value in zip(valid_contrib_token_ids, valid_contrib_values):
+            category = self._category_classifier.category_for_token_id(token_id)
+            self._jsd_top_category_contribs[category].append(float(contrib_value))
 
     def _record_top_events(
         self,
@@ -361,6 +432,95 @@ class LossDetailLogger:
             losses = losses[::stride][:max_items]
         return [float(value) for value in losses.tolist()]
 
+    def _has_category_values(self):
+        if not self.token_categories:
+            return False
+        return any(self._actual_category_losses[category] for category in CATEGORY_ORDER) or any(
+            self._jsd_top_category_contribs[category] for category in CATEGORY_ORDER
+        )
+
+    def _gather_category_summary(self):
+        local_payload = {
+            "actual_token_category_loss": {
+                category: list(self._actual_category_losses[category]) for category in CATEGORY_ORDER
+            },
+            "jsd_top_token_category_contrib": {
+                category: list(self._jsd_top_category_contribs[category]) for category in CATEGORY_ORDER
+            },
+        }
+
+        if dist.is_available() and dist.is_initialized():
+            gathered_items = gather_object([local_payload])
+        else:
+            gathered_items = [local_payload]
+
+        gathered_payloads = []
+        for item in gathered_items:
+            if isinstance(item, list):
+                gathered_payloads.extend(item)
+            else:
+                gathered_payloads.append(item)
+
+        merged_payload = {
+            "actual_token_category_loss": {category: [] for category in CATEGORY_ORDER},
+            "jsd_top_token_category_contrib": {category: [] for category in CATEGORY_ORDER},
+        }
+        for payload in gathered_payloads:
+            for section in merged_payload:
+                section_payload = payload.get(section, {})
+                for category in CATEGORY_ORDER:
+                    merged_payload[section][category].extend(section_payload.get(category, []))
+
+        return {
+            "actual_token_category_loss": self._summarize_category_values(
+                merged_payload["actual_token_category_loss"], value_name="loss"
+            ),
+            "jsd_top_token_category_contrib": self._summarize_category_values(
+                merged_payload["jsd_top_token_category_contrib"], value_name="contrib"
+            ),
+        }
+
+    def _summarize_category_values(self, values_by_category, *, value_name):
+        summary = {}
+        for category in CATEGORY_ORDER:
+            values = values_by_category.get(category, [])
+            if not values:
+                summary[category] = {"count": 0}
+                continue
+
+            tensor = torch.tensor(values, dtype=torch.float32)
+            quantiles = torch.quantile(
+                tensor,
+                torch.tensor([0.50, 0.90, 0.99], dtype=torch.float32),
+            )
+            summary[category] = {
+                "count": int(tensor.numel()),
+                f"{value_name}_sum": round(float(tensor.sum().item()), 6),
+                f"{value_name}_mean": round(float(tensor.mean().item()), 6),
+                f"{value_name}_p50": round(float(quantiles[0].item()), 6),
+                f"{value_name}_p90": round(float(quantiles[1].item()), 6),
+                f"{value_name}_p99": round(float(quantiles[2].item()), 6),
+                f"{value_name}_max": round(float(tensor.max().item()), 6),
+            }
+        return summary
+
+    def _add_category_logs(self, *, logs, category_summary):
+        actual_summary = category_summary["actual_token_category_loss"]
+        contrib_summary = category_summary["jsd_top_token_category_contrib"]
+        for category in CATEGORY_ORDER:
+            actual = actual_summary[category]
+            if actual["count"] > 0:
+                logs[f"loss_detail/category_actual/{category}_count"] = actual["count"]
+                logs[f"loss_detail/category_actual/{category}_loss_mean"] = actual["loss_mean"]
+                logs[f"loss_detail/category_actual/{category}_loss_p90"] = actual["loss_p90"]
+
+            contrib = contrib_summary[category]
+            if contrib["count"] > 0:
+                logs[f"loss_detail/category_jsd_top/{category}_count"] = contrib["count"]
+                logs[f"loss_detail/category_jsd_top/{category}_contrib_mean"] = contrib["contrib_mean"]
+                logs[f"loss_detail/category_jsd_top/{category}_contrib_p90"] = contrib["contrib_p90"]
+                logs[f"loss_detail/category_jsd_top/{category}_contrib_sum"] = contrib["contrib_sum"]
+
     def _decode_token(self, token_id):
         return self.tokenizer.decode([int(token_id)], skip_special_tokens=False)
 
@@ -412,7 +572,7 @@ class LossDetailLogger:
             return ""
         return self.tokenizer.decode(list(token_ids[: self.context_tokens]), skip_special_tokens=False)
 
-    def _print_summary(self, *, main_print, global_step, events, logs):
+    def _print_summary(self, *, main_print, global_step, events, logs, category_summary=None):
         main_print(f"\n{'='*80}")
         main_print(f"LOSS DETAIL SUMMARY step={global_step}")
         if "loss_detail/p50" in logs:
@@ -440,6 +600,8 @@ class LossDetailLogger:
             main_print(f"    student_top={self._format_token_probs(event['student_top_tokens'], 'prob')}")
             main_print(f"    teacher_top={self._format_token_probs(event['teacher_top_tokens'], 'prob')}")
             main_print(f"    jsd_top={self._format_token_probs(event['jsd_top_tokens'], 'contrib')}")
+        if category_summary is not None:
+            self._print_category_summary(main_print=main_print, category_summary=category_summary)
         main_print(f"{'='*80}\n")
 
     def _write_jsonl(self, *, global_step, events):
@@ -449,6 +611,17 @@ class LossDetailLogger:
         with output_path.open("w", encoding="utf-8") as handle:
             for event in events:
                 handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _write_category_summary(self, *, global_step, category_summary):
+        output_dir = self.output_dir / "loss_detail"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"token_category_summary_step_{global_step}.json"
+        payload = {
+            "step": int(global_step),
+            **category_summary,
+        }
+        with output_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
 
     def _log_wandb_tables(self, *, wandb_module, global_step, all_losses, events, bucket_sum, bucket_count):
         payload = {}
@@ -528,3 +701,34 @@ class LossDetailLogger:
         return "; ".join(
             f"{item['token']!r} {item[value_key]:.4f}" for item in items
         )
+
+    @staticmethod
+    def _print_category_summary(*, main_print, category_summary):
+        actual_summary = category_summary["actual_token_category_loss"]
+        contrib_summary = category_summary["jsd_top_token_category_contrib"]
+
+        main_print("Token category loss summary:")
+        for category in CATEGORY_ORDER:
+            actual = actual_summary[category]
+            if actual["count"] <= 0:
+                continue
+            main_print(
+                f"    actual/{category}: "
+                f"count={actual['count']} "
+                f"mean={actual['loss_mean']:.6f} "
+                f"p90={actual['loss_p90']:.6f} "
+                f"max={actual['loss_max']:.6f}"
+            )
+
+        main_print("Top-JSD-contributor category summary:")
+        for category in CATEGORY_ORDER:
+            contrib = contrib_summary[category]
+            if contrib["count"] <= 0:
+                continue
+            main_print(
+                f"    jsd_top/{category}: "
+                f"count={contrib['count']} "
+                f"mean={contrib['contrib_mean']:.6f} "
+                f"p90={contrib['contrib_p90']:.6f} "
+                f"sum={contrib['contrib_sum']:.6f}"
+            )

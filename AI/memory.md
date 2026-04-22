@@ -682,3 +682,15 @@
 ## 2026-04-22 : LinearOPSD teacher prompt wording cleanup
 - `LinearOPSD/corruption.py` changed the linear-OPSD teacher user message to a shorter continuation prompt: it shows a mathematically correct solution block, then asks the teacher to continue the exact following partial answer naturally and mathematically correctly.
 - The prompt no longer uses the high-leakage words `Reference`, `prompt`, `inconsistent`, `restore`, or `current work`; the exact token-level teacher trace and student-tail equality logic remain unchanged.
+
+## 2026-04-22 : LinearOPSD token-category loss diagnostics
+- Added optional token-category summaries to `LinearOPSD/loss_detail_logging.py`, backed by `LinearOPSD/token_loss_categories.py`.
+- The diagnostics are gated by `loss_detail_token_categories` and do not change rollout construction, scalar loss, or backward behavior.
+- The summary compares actual sampled-token position loss against the category of the highest per-position JSD contributor, so it can distinguish "student generated this class" from "this class caused the teacher/student distribution mismatch".
+
+## 2026-04-22 : LinearOPSD early token-category loss pattern
+- Analysis of `token_category_summary_step_0/2/4.json` showed rapid early loss reduction: actual loss/token fell from 0.0958 at step 0 to 0.0705 at step 4.
+- In steps 0/2/4, `reasoning_discourse_words` were only about 1.7-1.9% of actual sampled tokens but contributed about 6.5-7.4% of actual loss, with roughly 4x loss-share/count-share enrichment; the same category was also about 3x enriched as the top JSD-contributor category.
+- `answer_finalization` was rare but had the highest per-token actual loss; `math_action_words` and `proof_structure_words` were also enriched, while `math_symbols` and `numbers` were common but low-loss per token.
+- Adding `token_category_summary_step_6/8.json` confirmed the same qualitative pattern while total loss kept falling: actual loss/token fell further to 0.0543 by step 8, but `reasoning_discourse_words` still contributed 7.96% of actual loss from 2.33% of tokens and remained 2.3x enriched as top JSD contributors.
+- By step 8, `answer_finalization` actual loss was less dominant than at step 0, but its top-JSD contribution remained enriched; formulas/numbers still did not appear to be the main noise source.
