@@ -670,3 +670,11 @@
 - `LinearOPSD/corruption.py` now returns `teacher_trace_prefix_ids = gold_prefix_ids + careless_token_ids`; no inline sampled-tail or recovery marker is inserted into the assistant trace.
 - `LinearOPSD/opsd_trainer.py` now appends those trace ids directly after the teacher chat-template prefix and asserts the teacher trace ids exactly match the student prompt tail.
 - `careless_marker_text` and `recovery_marker_text` remain only as deprecated compatibility fields; launch scripts no longer pass sampled-tail marker text.
+
+## 2026-04-22 : LinearOPSD refineprompt2 GSM8K regression pattern
+- In `eval_results_gsm8k_Qwen3.5-2B_qwen35_2b_linear_opsd_r512_refineprompt2_temp1_checkpoint-300_chat_nonthinking_temp1.0_valn1.json`, GSM8K non-thinking accuracy is 65.73% versus the base non-thinking file's 74.30%, with format rate down from 91.81% to 74.83%.
+- The old teacher/student prompt-tail mismatch is not the current main issue: new loss-detail files show exact prompt-tail equality and almost no `rollout_pos=0` high-loss concentration.
+- The current regression is concentrated in long, meta-style outputs. For base-correct/current-wrong examples, current outputs average 445.5 words versus base 293.1 words, and p90 length is 1173.6 words versus base 558.6 words.
+- Outputs containing any of `reference`, `prompt/instruction`, or `wait/check/reconsider` have much worse behavior: 302/1319 examples, 38.08% accuracy, 54.30% format rate, 708.6 mean words, and 1235.6 p90 words. Outputs containing all three flags have only 19.79% accuracy and 31.25% format rate.
+- Strong reference leakage phrases such as `Reference provided`, `reference explicitly`, `Reference Analysis`, or `provided in the prompt` appear in 63 examples; these have 19.05% accuracy, 31.75% format rate, and 1039 mean words.
+- The likely causes are long `recovery_rollout_len=512` training loss on late drift tokens, remaining teacher-prompt words such as `Reference`, `prompt`, `inconsistent`, and `restore`, and train/eval final-answer mismatch (`\\boxed{}` in LinearOPSD student prompt versus `#### <number>` in GSM8K eval).
